@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Descargar & Separar Pistas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .tab-active { border-bottom: 2px solid #14b8a6; color:#14b8a6; }
+    .btn { padding:.55rem .9rem; border-radius:.55rem }
+    .card { background: rgba(17,24,39,.7) }
+    .track-row { display:flex; align-items:center; gap:.75rem; margin-bottom:.5rem; }
+    .track-label { width:12rem; display:inline-block; }
+    .vol-val { width:3rem; font-size:.75rem; text-align:right; color:#d1d5db; }
+  </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center">
+  <div class="w-full max-w-6xl card p-6 rounded-xl shadow-xl">
+    <h1 class="text-3xl font-bold text-center mb-6 text-teal-400">🎬 Descargar y Separar Pistas</h1>
+
+    <!-- Tabs -->
+    <div class="flex gap-8 justify-center mb-6">
+      <button id="tab-download" class="pb-2 tab-active">Descargar</button>
+      <button id="tab-sep-file" class="pb-2">Separar (Archivo)</button>
+    </div>
+
+    <!-- =============== DESCARGAR =============== -->
+    <section id="panel-download">
+      <div class="grid md:grid-cols-2 gap-6">
+        <div class="bg-gray-900/40 p-5 rounded-xl">
+          <h2 class="text-lg font-semibold mb-4">Descargador de YouTube</h2>
+
+          <!-- Flujo original de tu app: POST /  -->
+          <form id="downloadForm" method="POST" class="space-y-6">
+            <div>
+              <label class="block text-sm font-medium mb-1">URL del video</label>
+              <input id="url" name="url" required value="{{ url or '' }}"
+                     class="w-full p-3 bg-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500" />
+            </div>
+
+            {% if formats %}
+            <div id="formatSection">
+              <label class="block text-sm font-medium mb-1">Calidad</label>
+              <select name="format_id" required
+                      class="w-full p-3 bg-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500">
+                {% for f in formats %}
+                  <option value="{{ f.format_id }}">
+                    {{ f.resolution }} ({{ f.ext }}){% if f.filesize %} — {{ (f.filesize/1024/1024)|round(1) }} MB{% endif %}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            {% endif %}
+
+            <div class="pt-2">
+              <button id="submitBtn" type="submit"
+                class="w-full {{ 'bg-teal-500 hover:bg-teal-600' if formats else 'bg-indigo-500 hover:bg-indigo-600' }} text-white font-semibold py-3 rounded-md transition">
+                {{ 'Descargar' if formats else 'Buscar calidad' }}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div class="bg-gray-900/40 p-5 rounded-xl text-sm text-gray-300">
+          <p>1) Pegá la URL y presioná <b>“Buscar calidad”</b>.</p>
+          <p>2) Elegí el formato y presioná <b>“Descargar”</b>.</p>
+          <p>3) Al cambiar de solapa, se limpia todo automáticamente.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== SEPARAR (ARCHIVO) =============== -->
+    <section id="panel-sep-file" class="hidden">
+      <div class="bg-gray-900/40 p-5 rounded-xl space-y-4">
+        <h2 class="text-lg font-semibold">Separar pistas subiendo un archivo</h2>
+
+        <form id="uploadForm" class="flex flex-col md:flex-row gap-3" enctype="multipart/form-data">
+          <input type="file" name="file" id="fileInput" accept="video/*,audio/*" class="flex-1 bg-gray-700 rounded px-3 py-2">
+          <button type="submit" id="sepBtn" class="btn bg-teal-600 hover:bg-teal-500">Separar</button>
+        </form>
+
+        <div class="grid md:grid-cols-2 gap-4 items-start">
+          <!-- Video referencia (muted) -->
+          <div>
+            <video id="up-video" class="w-full rounded bg-black" controls muted></video>
+            <p class="text-xs text-gray-400 mt-1">El video se reproduce <b>en silencio</b>; el audio real sale de las pistas separadas.</p>
+          </div>
+
+          <!-- Controles por pista -->
+          <div class="bg-gray-700 rounded p-3">
+            <h3 class="font-semibold mb-2">Pistas (silencio / volumen)</h3>
+            <div id="stems-controls" class="space-y-2">
+              <p class="text-sm text-gray-300">Aún no hay pistas. Subí un archivo y presioná “Separar”.</p>
+            </div>
+
+            <div class="mt-3 flex gap-2">
+              <button id="btn-play"   class="btn bg-emerald-600 hover:bg-emerald-500">Play</button>
+              <button id="btn-pause"  class="btn bg-rose-600 hover:bg-rose-500">Pausa</button>
+              <button id="btn-restart"class="btn bg-gray-600 hover:bg-gray-500">⟲</button>
+            </div>
+            <p id="sync-status" class="text-xs text-gray-300 mt-2"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ====== Script (todo ordenado para evitar crash y recargas) ====== -->
+  <script>
+  // ===== base =====
+  window.API = window.API || location.origin;
+
+  // refs
+  const tabs   = { download: document.getElementById('tab-download'), sepFile: document.getElementById('tab-sep-file') };
+  const panels = { download: document.getElementById('panel-download'), sepFile: document.getElementById('panel-sep-file') };
+
+  const downloadForm = document.getElementById("downloadForm");
+  const uploadForm   = document.getElementById('uploadForm');
+  const fileInput    = document.getElementById('fileInput');
+  const upVideo      = document.getElementById('up-video');
+  const controls     = document.getElementById('stems-controls');
+  const btnPlay      = document.getElementById('btn-play');
+  const btnPause     = document.getElementById('btn-pause');
+  const btnRestart   = document.getElementById('btn-restart');
+  const syncStatus   = document.getElementById('sync-status');
+
+  // estado
+  let uid = null;
+  let stemsMap = {};
+  let audios = {};   // ¡declarado antes de clearAll!
+
+  // nombres/orden
+  const NAME = {
+    vocals:'Voz',
+    guitar_lead:'Guitarra Lead',
+    guitar_left:'Guitarra Izquierda',
+    guitar_right:'Guitarra Derecha',
+    bass:'Bajo',
+    piano:'Teclado',
+    drums:'Batería'
+  };
+  const WANTED_KEYS = ['vocals','guitar_lead','guitar_left','guitar_right','bass','piano','drums'];
+  const ORDER = ['Voz','Guitarra Lead','Guitarra Izquierda','Guitarra Derecha','Bajo','Teclado','Batería'];
+
+  // mezcla base “laptop-friendly”: prioriza graves bajando el resto
+  const DEFAULT_VOL = {
+    vocals:0.90,
+    drums:1.00,
+    bass:1.00,
+    guitar_lead:0.70,
+    guitar_left:0.65,
+    guitar_right:0.65,
+    piano:0.60
+  };
+
+  // ===== tabs + blanqueo =====
+  function activate(which){
+    Object.values(tabs).forEach(t=>t.classList.remove('tab-active'));
+    Object.values(panels).forEach(p=>p.classList.add('hidden'));
+    tabs[which].classList.add('tab-active');
+    panels[which].classList.remove('hidden');
+    clearAll();
+  }
+  tabs.download.onclick = ()=>activate('download');
+  tabs.sepFile.onclick  = ()=>activate('sepFile');
+
+  // blanqueo total (NO toca fileInput)
+  function clearAll(){
+    Object.values(audios || {}).forEach(a=>{ try{ a.pause(); a.src=''; }catch{} });
+    audios = {};
+    if (controls) controls.innerHTML = '<p class="text-sm text-gray-300">Aún no hay pistas. Subí un archivo y presioná “Separar”.</p>';
+    if (upVideo){ try{ upVideo.pause(); }catch{} upVideo.removeAttribute('src'); upVideo.load(); }
+    if (syncStatus) syncStatus.textContent = '';
+    const url=document.getElementById("url"); if(url) url.value="";
+    const fs=document.getElementById("formatSection"); if(fs) fs.remove();
+    const btn=document.getElementById("submitBtn");
+    if(btn){btn.innerText="Buscar calidad";btn.classList.remove("bg-teal-500","hover:bg-teal-600");btn.classList.add("bg-indigo-500","hover:bg-indigo-600")}
+    uid=null; stemsMap={};
+  }
+
+  // ===== separar (sin auto-play) =====
+  uploadForm && uploadForm.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+      alert('Elegí un archivo primero'); return;
+    }
+    controls.innerHTML = 'Procesando separación...';
+    try{
+      const fd = new FormData(uploadForm);
+      const r = await fetch(`${API}/api/separate/upload`, { method:'POST', body:fd });
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.error || 'Error en la separación');
+
+      uid = j.uid || null;
+
+      if (j.uploaded_url) {
+        upVideo.src = j.uploaded_url;
+        upVideo.currentTime = 0;
+        upVideo.muted = true;  // audio real = stems
+      }
+
+      stemsMap = j.stems || {};
+      buildStemsUI(stemsMap);
+
+      // NO auto-play: queda listo para que vos toques Play
+      syncStatus.textContent = "Listo. Tocá Play para escuchar (o el ▶ del video).";
+    }catch(e){
+      controls.innerHTML = '❌ '+ (e.message || e);
+      alert('Error al separar: ' + (e.message || e));
+    }
+  });
+
+  // arma UI y audios
+  function buildStemsUI(map){
+    Object.values(audios).forEach(a=>{ try{ a.pause(); }catch{} });
+    audios = {};
+    controls.innerHTML = '';
+
+    const items = Object.entries(map)
+      .filter(([k]) => WANTED_KEYS.includes(k))
+      .map(([k,u]) => [NAME[k] || k, k, u])
+      .sort((a,b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]));
+
+    if (!items.length) {
+      controls.innerHTML = '<p class="text-sm text-gray-300">No se generaron pistas.</p>';
+      return;
+    }
+
+    items.forEach(([esp,key,url])=>{
+      const row = document.createElement('div');
+      row.className = 'track-row';
+      row.innerHTML = `
+        <label class="track-label">${esp}</label>
+        <input data-name="${key}" type="checkbox" class="mute"> <span class="text-xs">Silencio</span>
+        <input data-name="${key}" type="range" min="0" max="1" step="0.01" value="${DEFAULT_VOL[key] ?? 1}" class="flex-1 vol">
+        <span class="vol-val">${Math.round((DEFAULT_VOL[key] ?? 1)*100)}%</span>`;
+      controls.appendChild(row);
+
+      const audio = new Audio(url);
+      audio.preload = "auto";
+      audio.crossOrigin = "anonymous";
+      audio.volume = DEFAULT_VOL[key] ?? 1;
+      audio.muted = false;
+      audios[key] = audio;
+
+      const chk = row.querySelector('.mute');
+      const vol = row.querySelector('.vol');
+      const vv  = row.querySelector('.vol-val');
+
+      chk.onchange = ()=>{ audio.muted = chk.checked; };
+      vol.oninput  = ()=>{ audio.volume = parseFloat(vol.value); vv.textContent = Math.round(audio.volume*100)+'%'; };
+    });
+  }
+
+  // ===== controles =====
+  btnPlay   && (btnPlay.onclick    = async ()=>{
+    // pequeña espera a que carguen (evita “tartamudeos”)
+    await waitReady(Object.values(audios));
+    try{ upVideo.play(); }catch{}
+    playGroup(audios);
+  });
+  btnPause  && (btnPause.onclick   = ()=>{ upVideo.pause(); pauseGroup(audios); });
+  btnRestart&& (btnRestart.onclick = async ()=>{
+    upVideo.currentTime=0;
+    resetTime(audios);
+    try{ upVideo.play(); }catch{}
+    playGroup(audios);
+  });
+
+  // resync sólo cuando el usuario arrastra (NO hay setInterval)
+  upVideo && upVideo.addEventListener('seeking', ()=>{
+    const t = upVideo.currentTime || 0;
+    syncGroup(audios, t);
+  });
+
+  // helpers
+  function playGroup(g){ Object.values(g).forEach(a=>{ a.play().catch(()=>{}); }); }
+  function pauseGroup(g){ Object.values(g).forEach(a=>a.pause()); }
+  function resetTime(g){ Object.values(g).forEach(a=>{ a.currentTime=0; }); }
+  function syncGroup(g,t){ Object.values(g).forEach(a=>{ if(Math.abs((a.currentTime||0)-t) > 0.25) a.currentTime = t; }); }
+  function waitReady(arr){
+    const ps = arr.map(a=>new Promise(res=>{
+      const done=()=>res();
+      if (a.readyState>=3) return res(); // canplay
+      const to = setTimeout(done, 1200);
+      a.addEventListener('canplay', ()=>{ clearTimeout(to); done(); }, { once:true });
+      a.addEventListener('canplaythrough', ()=>{ clearTimeout(to); done(); }, { once:true });
+    }));
+    return Promise.all(ps);
+  }
+
+  // solapa inicial
+  activate('download');
+  </script>
+</body>
+</html>

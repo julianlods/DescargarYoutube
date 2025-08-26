@@ -13,3 +13,6 @@ downloads/
 output/
 separated/
 .cache/
+media/
+pretrained_models/
+*.wav
