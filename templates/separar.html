@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Separar / Mutear pistas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen flex items-center justify-center">
+  <div class="w-full max-w-3xl bg-white p-6 rounded-xl shadow-xl">
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold mb-6 text-red-600">Separar / Mutear pistas</h1>
+      <a href="{{ url_for('descargar') }}"
+         class="mb-6 inline-flex items-center gap-2 border border-red-500 text-red-600 hover:bg-red-50 px-3 py-2 rounded-md text-sm font-semibold transition">
+        Descargar de YouTube
+      </a>
+    </div>
+
+    {% if error %}
+      <div class="mb-4 bg-red-100 border border-red-400 text-red-700 p-3 rounded">{{ error }}</div>
+    {% endif %}
+
+    <!-- Subida de archivo (sin YouTube) -->
+    <form method="POST" action="{{ url_for('separar') }}" enctype="multipart/form-data" class="space-y-6">
+      <div>
+        <label class="block text-sm font-medium mb-1">Subir archivo (audio o video)</label>
+        <input type="file" name="file" accept="audio/*,video/*" required
+               class="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4
+                      file:rounded-md file:border-0 file:text-sm file:font-semibold
+                      file:bg-red-600 file:text-white hover:file:bg-red-700" />
+      </div>
+
+      <div class="pt-2">
+        <button type="submit"
+                class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
+          Separar
+        </button>
+      </div>
+    </form>
+
+    {% if mem_session %}
+      <div class="mt-8">
+        <h2 class="text-xl font-semibold mb-2">Reproductor</h2>
+        <p class="text-sm text-gray-600 mb-3">
+          Un solo reproductor. Muteá o ajustá volúmenes por instrumento en <b>tiempo real</b> (no se reinicia).
+        </p>
+
+        <!-- Transport -->
+        <div id="transport" class="flex items-center gap-3 mb-3">
+          <button id="back10" type="button" class="...">⏮ −10s</button>
+          <button id="playBtn" type="button" class="...">▷ Play</button>
+          <button id="fwd10"  type="button" class="...">+10s ⏭</button>
+          <input id="seek" type="range" min="0" max="0" value="0" step="0.01" class="flex-1 accent-red-600">
+          <div class="text-sm w-32 text-right"><span id="cur">0:00</span> / <span id="dur">0:00</span></div>
+        </div>
+
+        <!-- Mezclador (labels en español) -->
+        <div id="mixer" class="space-y-4">
+          {% set all_stems = ['vocals','guitar','bass','drums','piano','other'] %}
+          {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','piano':'Piano','other':'Otros'} %}
+
+          {% for name in all_stems %}
+            {% if stems_present and (name in stems_present) %}
+              <div class="border border-gray-200 rounded-lg p-4">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      class="w-4 h-4 accent-red-600"
+                      checked
+                      data-stem="{{ name }}"
+                      aria-label="Silenciar {{ labels.get(name, name) }}"
+                      title="Silenciar {{ labels.get(name, name) }}"
+                    />
+                    <strong class="w-28">{{ labels.get(name, name) }}</strong>
+                  </div>
+
+                  <div class="flex-1 flex items-center gap-3">
+                    <input
+                      type="range" min="0" max="100" value="100" step="1"
+                      class="w-full accent-red-600"
+                      data-stem="{{ name }}"
+                      aria-label="Volumen de {{ labels.get(name, name) }}"
+                      title="Volumen de {{ labels.get(name, name) }}"
+                    />
+                    <span class="text-sm w-12 text-right" data-meter="{{ name }}">100%</span>
+                  </div>
+                </div>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if mem_session %}
+  <script>
+    (function () {
+      // === Config desde backend ===
+      const mem = "{{ mem_session }}";
+      const stems = {{ stems_present|tojson|safe if stems_present else '[]' }};
+      const order = ['vocals','guitar','bass','drums','piano','other'];
+
+      // === Players en memoria (uno por stem) ===
+      const audios = {};        // nombre -> HTMLAudioElement
+      const defaultGain = {};   // 0..1
+      order.forEach(n => {
+        if (!stems.includes(n)) return;
+        const a = new Audio(`/mem_stem/${mem}/${n}.wav`); // Ruta ABSOLUTA
+        a.preload = 'auto';
+        a.muted  = false; // que suene
+        a.volume = 1.0;   // volumen inicial
+        audios[n] = a;
+        defaultGain[n] = 1.0;
+      });
+
+      // “Reloj”
+      const clockName = stems[0];
+      const clock = clockName ? audios[clockName] : null;
+      if (!clock) return;
+
+      // UI
+      const playBtn = document.getElementById('playBtn');
+      const seek    = document.getElementById('seek');
+      const cur     = document.getElementById('cur');
+      const dur     = document.getElementById('dur');
+      const back10  = document.getElementById('back10');
+      const fwd10   = document.getElementById('fwd10');
+
+      function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+      function fmt(t){
+        if (!isFinite(t) || t < 0) t = 0;
+        const m = Math.floor(t/60), s = Math.floor(t%60);
+        return `${m}:${s.toString().padStart(2,'0')}`;
+      }
+
+      // Duración (toma la mayor entre stems)
+      function updateDuration(){
+        const d = Math.max(...Object.values(audios).map(a => a.duration || 0), 0);
+        if (d > 0) { seek.max = d.toFixed(2); dur.textContent = fmt(d); }
+      }
+      Object.values(audios).forEach(a => a.addEventListener('loadedmetadata', updateDuration));
+      updateDuration();
+
+      // Sincronía básica
+      function resyncAll(t){ Object.values(audios).forEach(a => { try { a.currentTime = t; } catch {} }); }
+      function softSync(){
+        const t = clock.currentTime || 0;
+        Object.values(audios).forEach(a => {
+          const d = Math.abs((a.currentTime||0) - t);
+          if (d > 0.2) { try { a.currentTime = t; } catch {} }
+        });
+      }
+      setInterval(softSync, 1000);
+
+      // Play / Pause
+      let playing = false;
+      playBtn.addEventListener('click', async () => {
+        // asegurar salida audible
+        Object.values(audios).forEach(a => { a.muted = false; if (a.volume === 0) a.volume = 1.0; });
+        if (!playing) {
+          resyncAll(clock.currentTime || 0);
+          await Promise.all(Object.values(audios).map(a => a.play().catch(()=>{})));
+          playing = true; playBtn.textContent = '❚❚ Pause';
+        } else {
+          Object.values(audios).forEach(a => a.pause());
+          playing = false; playBtn.textContent = '▷ Play';
+        }
+      });
+
+      // Seek
+      function setTime(t){
+        const d = parseFloat(seek.max) || clock.duration || 0;
+        const tt = clamp(t, 0, d || 0);
+        resyncAll(tt);
+        if (playing) Object.values(audios).forEach(a => { if (a.paused) a.play().catch(()=>{}); });
+        seek.value = tt.toFixed(2); cur.textContent = fmt(tt);
+      }
+      seek.addEventListener('input', () => setTime(parseFloat(seek.value) || 0));
+      back10.addEventListener('click', () => setTime((clock.currentTime || 0) - 10));
+      fwd10 .addEventListener('click', () => setTime((clock.currentTime || 0) + 10));
+
+      // Ticker
+      function raf(){ if (playing){ const t=clock.currentTime||0; seek.value=t.toFixed(2); cur.textContent=fmt(t);} requestAnimationFrame(raf); }
+      requestAnimationFrame(raf);
+
+      // Volúmenes (slider) — directo al elemento
+      document.querySelectorAll('input[type="range"][data-stem]').forEach(r => {
+        const name = r.getAttribute('data-stem'); if (!audios[name]) return;
+        const meter = document.querySelector(`[data-meter="${name}"]`);
+        r.addEventListener('input', () => {
+          const g = (parseInt(r.value, 10) || 0) / 100;
+          defaultGain[name] = g;
+          audios[name].volume = g;
+          audios[name].muted  = (g === 0);
+          if (meter) meter.textContent = Math.round(g*100) + '%';
+        });
+      });
+
+      // Mute (checkbox)
+      document.querySelectorAll('input[type="checkbox"][data-stem]').forEach(c => {
+        const name = c.getAttribute('data-stem'); if (!audios[name]) return;
+        const slider = document.querySelector(`input[type="range"][data-stem="${name}"]`);
+        const meter  = document.querySelector(`[data-meter="${name}"]`);
+        c.addEventListener('change', () => {
+          if (c.checked) {
+            const g = defaultGain[name] ?? 1.0;
+            audios[name].muted  = (g === 0);
+            audios[name].volume = g;
+            if (slider) slider.value = Math.round(g*100);
+            if (meter)  meter.textContent = Math.round(g*100)+'%';
+          } else {
+            audios[name].muted  = true;
+            audios[name].volume = 0;
+            if (slider) slider.value = 0;
+            if (meter)  meter.textContent = '0%';
+          }
+        });
+      });
+
+      // Atajos
+      window.addEventListener('keydown', (e) => {
+        const el = document.activeElement, tag = (el && el.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (!clock || e.repeat) return;
+        if (e.code === 'Space' || e.code === 'KeyK'){ e.preventDefault(); playBtn.click(); return; }
+        if (e.code === 'ArrowLeft' || e.code === 'KeyJ'){ e.preventDefault(); setTime((clock.currentTime||0)-5); return; }
+        if (e.code === 'ArrowRight'|| e.code === 'KeyL'){ e.preventDefault(); setTime((clock.currentTime||0)+5); return; }
+        if (e.code === 'Home'){ e.preventDefault(); setTime(0); return; }
+        if (e.code === 'End'){ e.preventDefault(); setTime(parseFloat(seek.max)||clock.duration||0); return; }
+      });
+    })();
+  </script>
+  {% endif %}
+
+
+</body>
+</html>

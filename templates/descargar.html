@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Descargar de YouTube</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen flex items-center justify-center">
+  <div class="w-full max-w-3xl bg-white p-6 rounded-xl shadow-xl">
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold mb-6 text-red-600">Descargar de YouTube</h1>
+
+      <!-- Link a SEPARAR -->
+      <a href="{{ url_for('separar') }}"
+         class="mb-6 inline-flex items-center gap-2 border border-red-500 text-red-600 hover:bg-red-50 px-3 py-2 rounded-md text-sm font-semibold transition">
+        Separar / Mutear pistas
+      </a>
+    </div>
+
+    {% if error %}
+      <div class="mb-4 bg-red-100 border border-red-400 text-red-700 p-3 rounded">{{ error }}</div>
+    {% endif %}
+
+    <!-- action explícito -->
+    <form id="dlForm" method="POST" action="{{ url_for('descargar') }}" class="space-y-6">
+      <div>
+        <label class="block text-sm font-medium mb-1">URL del video</label>
+        <input id="url" name="url" required value="{{ url or '' }}"
+               class="w-full p-3 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" />
+      </div>
+
+      {% if formats %}
+        <div id="formatSection">
+          <label class="block text-sm font-medium mb-1">Calidad</label>
+          <select name="format_id" required
+                  class="w-full p-3 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500">
+            {% for f in formats %}
+              <option value="{{ f.format_id }}">
+                {{ f.resolution }} ({{ f.ext }}){% if f.filesize %} — {{ (f.filesize/1024/1024)|round(1) }} MB{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endif %}
+
+      <div class="pt-2">
+        <button id="submitBtn" type="submit"
+          class="w-full {{ 'bg-red-600 hover:bg-red-700' if formats else 'bg-red-500 hover:bg-red-600' }} text-white font-semibold py-3 rounded-md transition">
+          {{ 'Descargar' if formats else 'Buscar calidad' }}
+        </button>
+      </div>
+    </form>
+
+    <p class="text-sm text-gray-600 mt-6">
+      1) Pegá la URL y presioná <b>“Buscar calidad”</b>. 2) Elegí el formato y presioná <b>“Descargar”</b>.
+    </p>
+  </div>
+
+  <!-- Popup/Toast -->
+  <div id="toast" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 hidden">
+    <div class="bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg">
+      Archivo descargado
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const form = document.getElementById('dlForm');
+      if (!form) return;
+
+      form.addEventListener('submit', async function (e) {
+        // Interceptamos SOLO cuando es el segundo paso (hay format_id a elegir).
+        const hasFormatSelect = !!form.querySelector('select[name="format_id"]');
+        if (!hasFormatSelect) return; // Dejar POST normal para "Buscar calidad"
+
+        e.preventDefault();
+
+        const action = form.getAttribute('action');
+        const fd = new FormData(form);
+
+        // Evitar doble click
+        const btn = document.getElementById('submitBtn');
+        const oldLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Descargando…';
+
+        try {
+          const resp = await fetch(action, { method: 'POST', body: fd });
+          if (!resp.ok) throw new Error('Descarga falló');
+
+          // Recibimos el archivo y lo descargamos como blob
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+
+          // Tomamos nombre del header si viene, si no, uno default
+          const cd = resp.headers.get('Content-Disposition') || '';
+          const match = /filename\*?=(?:UTF-8''|")?([^;\r\n"]+)/i.exec(cd);
+          const filename = match ? decodeURIComponent(match[1].replace(/"/g, '')) : 'video.mp4';
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          // Limpiar campos y UI
+          const urlInput = document.getElementById('url');
+          if (urlInput) urlInput.value = '';
+          const formatSection = document.getElementById('formatSection');
+          if (formatSection) formatSection.remove();
+
+          // Mostrar popup
+          showToast('Archivo descargado');
+        } catch (err) {
+          console.error(err);
+          showToast('Hubo un error en la descarga', true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = oldLabel;
+        }
+      });
+
+      function showToast(message, error = false) {
+        const toast = document.getElementById('toast');
+        if (!toast) return;
+        toast.querySelector('div').textContent = message;
+        toast.querySelector('div').className =
+          (error
+            ? 'bg-red-700 text-white px-4 py-3 rounded-lg shadow-lg'
+            : 'bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg');
+        toast.classList.remove('hidden');
+        setTimeout(() => toast.classList.add('hidden'), 5000);
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,84 +1,42 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, render_template, request, send_file, after_this_request, jsonify, send_from_directory
-import yt_dlp
-import os
+import os, io
+import sys
 import uuid
 import shutil
-import subprocess, os
+import time
+import subprocess
 from pathlib import Path
+from typing import Dict, List
+from tempfile import TemporaryDirectory
+from threading import Lock
+
+from flask import (
+    Flask, render_template, request, redirect, url_for, send_file,
+    send_from_directory, abort, after_this_request, jsonify,
+    Response, stream_with_context
+)
 from werkzeug.utils import secure_filename
+import yt_dlp
 
-
-def _run(cmd):
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if p.returncode != 0:
-        raise RuntimeError(p.stdout)
-    return p.stdout
-
-def refine_guitars_3(stems_dir: Path):
-    """Toma other.wav y genera 3 guitarras: lead, left, right."""
-    other = stems_dir / "other.wav"
-    if not other.exists():
-        # Si separaste en 5 stems, 'other' ya no tiene piano ni baterías.
-        # Si no existe (raro), salgo sin romper.
-        return {}
-
-    out = {
-        "guitar_lead": stems_dir / "guitar_lead.wav",
-        "guitar_left": stems_dir / "guitar_left.wav",
-        "guitar_right": stems_dir / "guitar_right.wav",
-    }
-
-    # Lead: contenido central + presencia
-    _run([
-        "ffmpeg","-y","-i",str(other),"-filter_complex",
-        "pan=stereo|c0=0.6*FL+0.6*FR|c1=0.6*FL+0.6*FR,"
-        "highpass=f=300,bandpass=f=1800:w=3000:t=h,"
-        "equalizer=f=2500:t=h:width_type=q:width=0.9:g=5,"
-        "equalizer=f=5200:t=h:width_type=q:width=0.9:g=4,"
-        "alimiter=limit=0.9",
-        str(out["guitar_lead"])
-    ])
-
-    # Rítmica Izquierda: side L con cuerpo
-    _run([
-        "ffmpeg","-y","-i",str(other),"-filter_complex",
-        "pan=stereo|c0=0.9*FL-0.9*FR|c1=0*FR,"
-        "highpass=f=120,lowpass=f=3500,"
-        "equalizer=f=220:t=h:width_type=q:width=1.0:g=5,"
-        "equalizer=f=800:t=h:width_type=q:width=1.0:g=3,"
-        "alimiter=limit=0.9",
-        str(out["guitar_left"])
-    ])
-
-    # Rítmica Derecha: side R con cuerpo
-    _run([
-        "ffmpeg","-y","-i",str(other),"-filter_complex",
-        "pan=stereo|c0=0*FL|c1=0.9*FR-0.9*FL,"
-        "highpass=f=120,lowpass=f=3500,"
-        "equalizer=f=220:t=h:width_type=q:width=1.0:g=5,"
-        "equalizer=f=800:t=h:width_type=q:width=1.0:g=3,"
-        "alimiter=limit=0.9",
-        str(out["guitar_right"])
-    ])
-
-    # Devuelvo rutas existentes
-    return {k: str(v) for k,v in out.items() if v.exists()}
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Config básica
+# ──────────────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # hasta 1 GB por si subís videos grandes
+app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # hasta 1GB
 
 BASE_DIR = Path(__file__).parent.resolve()
 DOWNLOAD_FOLDER = BASE_DIR / "downloads"
 MEDIA_DIR = BASE_DIR / "media"
-STEMS_DIR = MEDIA_DIR / "stems"
 AUDIO_DIR = MEDIA_DIR / "audio"
-UPLOADS_DIR = MEDIA_DIR / "uploads"  # para reproducir archivos subidos (muted) mientras oís los stems
+UPLOADS_DIR = MEDIA_DIR / "uploads"
+STEMS_DIR = MEDIA_DIR / "stems"
 
-for d in (DOWNLOAD_FOLDER, MEDIA_DIR, STEMS_DIR, AUDIO_DIR, UPLOADS_DIR):
+for d in (DOWNLOAD_FOLDER, MEDIA_DIR, AUDIO_DIR, UPLOADS_DIR, STEMS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-# ---------- UTILIDADES ----------
+# ──────────────────────────────────────────────────────────────────────────────
+# yt-dlp (para /descargar)
+# ──────────────────────────────────────────────────────────────────────────────
 YDL_COMMON = {
     'quiet': True,
     'no_warnings': True,
@@ -89,208 +47,271 @@ YDL_COMMON = {
 }
 
 def ytdlp_extract_info(url: str):
+    """Obtiene info del video (formatos)."""
     opts = {**YDL_COMMON, 'skip_download': True, 'extract_flat': False}
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
-def ytdlp_download_audio(url: str, out_stem: Path):
-    """
-    Descarga bestaudio a AUDIO_DIR. out_stem no lleva extensión; se detecta luego.
-    Devuelve (ruta_audio, info).
-    """
-    outtmpl = str(out_stem)
-    with yt_dlp.YoutubeDL({**YDL_COMMON, 'outtmpl': outtmpl, 'format': 'bestaudio/best'}) as ydl:
-        info = ydl.extract_info(url, download=True)
+def list_mp4_formats(info: dict):
+    """Filtra MP4 con audio+video."""
+    fmts = []
+    for f in info.get('formats', []):
+        if f.get('ext') == 'mp4' and f.get('acodec') != 'none' and f.get('vcodec') != 'none':
+            fmts.append({
+                'format_id': f['format_id'],
+                'ext': f['ext'],
+                'resolution': f.get('format_note') or f.get('height'),
+                'filesize': f.get('filesize')
+            })
+    return fmts
 
-    p = out_stem
-    if not p.suffix:
-        # intentar encontrar la extensión real
-        for ext in ('.m4a', '.webm', '.opus', '.mp3', '.wav'):
-            if p.with_suffix(ext).exists():
-                p = p.with_suffix(ext)
-                break
-    return str(p), info
+def download_by_format(url: str, format_id: str, out_path: Path) -> Path:
+    """Descarga el formato elegido a out_path (MP4)."""
+    ydl_opts = {'outtmpl': str(out_path), 'format': format_id, **YDL_COMMON}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+    return out_path
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FFmpeg helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Cache en memoria de stems (ttl ~ 1 hora)
+MEM_STEMS = {}  # sid -> {"ts": epoch, "stems": {"vocals": bytes, ...}}
+MEM_LOCK = Lock()
+
+def _purge_mem(ttl=3600):
+    now = time.time()
+    with MEM_LOCK:
+        to_del = [sid for sid, v in MEM_STEMS.items() if now - v.get("ts", now) > ttl]
+        for sid in to_del:
+            MEM_STEMS.pop(sid, None)
+
 
 def ffmpeg_extract_audio(input_path: str, out_wav: str):
     """
-    Extrae/convierte audio a WAV (mono o estéreo según fuente) usando ffmpeg.
+    Convierte a WAV 44.1kHz s16le (estándar).
     """
     cmd = [
         'ffmpeg', '-y',
         '-i', input_path,
-        '-vn',  # sin video
+        '-vn',
         '-acodec', 'pcm_s16le',
         '-ar', '44100',
         out_wav
     ]
     subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
-def run_spleeter(input_audio: str, outdir: Path, stems: int = 4):
+
+def safe_unlink(p: Path):
+    try:
+        if p and p.exists():
+            p.unlink()
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Demucs (6 stems: vocals, drums, bass, other, guitar, piano)
+# ──────────────────────────────────────────────────────────────────────────────
+def run_demucs6(input_audio: str, outdir: Path):
     """
-    Ejecuta Spleeter por CLI para 4 o 5 stems.
-    Genera WAVs: vocals.wav, drums.wav, bass.wav, other.wav (+ piano.wav si 5 stems)
+    Usa Demucs v4 (htdemucs_6s) para separar:
+    vocals, drums, bass, other, guitar, piano
+    Fuerza CPU en Windows (evita errores de CUDA si no hay GPU).
+    Loguea stderr para ver el motivo real si falla.
     """
-    if stems not in (4, 5):
-        stems = 4
     outdir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        'spleeter', 'separate',
-        '-p', f'spleeter:{stems}stems',
-        '-o', str(outdir),
+        sys.executable, "-m", "demucs.separate",
+        "-n", "htdemucs_6s",
+        "-d", "cpu",                 # <── fuerza CPU
+        "-o", str(outdir),
         input_audio
     ]
-    subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    # Spleeter crea subcarpeta con el nombre del archivo base; mover a outdir raíz
-    produced = outdir / Path(input_audio).stem
-    if produced.is_dir():
-        for f in produced.iterdir():
-            shutil.move(str(f), str(outdir / f.name))
-        produced.rmdir()
+    # Ejecutamos capturando stderr para reportar el motivo real
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"Demucs falló (htdemucs_6s). Detalle:\n{p.stderr}")
 
-def stems_map(stem_dir: Path):
-    result = {}
-    for name in ('vocals', 'drums', 'bass', 'other', 'piano'):
-        f = stem_dir / f"{name}.wav"
-        if f.exists():
-            result[name] = f"/media/stems/{stem_dir.name}/{f.name}"
-    return result
+    # Aplana la salida: outdir/htdemucs_6s/<basename>/*.wav  → outdir/*.wav
+    base = Path(input_audio).stem
+    model_folder = outdir / "htdemucs_6s" / base
+    if model_folder.is_dir():
+        for f in model_folder.iterdir():
+            if f.suffix.lower() == ".wav":
+                shutil.move(str(f), str(outdir / f.name))
+        # limpiar carpetas si quedaron vacías (ignorar errores)
+        try:
+            model_folder.rmdir()
+            (outdir / "htdemucs_6s").rmdir()
+        except Exception:
+            pass
 
-# ---------- RUTAS EXISTENTES (DESCARGA) ----------
-@app.route('/', methods=['GET', 'POST'])
-def index():
+
+def separate_to_memory(input_wav_path: Path):
     """
-    Mantengo tu flujo de descarga:
-    - POST con url (sin format_id) => consulta calidades
-    - POST con url + format_id => descarga y dispara send_file
+    Ejecuta Demucs en un directorio TEMPORAL, carga los WAV en memoria (bytes)
+    y borra todo del disco al terminar. Devuelve (sid, stems_present).
+    """
+    _purge_mem()
+    with TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        run_demucs6(str(input_wav_path), tmpdir)  # genera .wav en tmpdir y los aplana
+
+        stems_bytes = {}
+        for name in STEM_ORDER:
+            f = tmpdir / f"{name}.wav"
+            if f.exists():
+                stems_bytes[name] = f.read_bytes()
+
+    # Guardamos en memoria con un id de sesión
+    sid = uuid.uuid4().hex[:10]
+    with MEM_LOCK:
+        MEM_STEMS[sid] = {"ts": time.time(), "stems": stems_bytes}
+
+    return sid, list(stems_bytes.keys())
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers de mix
+# ──────────────────────────────────────────────────────────────────────────────
+STEM_ORDER = ['vocals', 'guitar', 'bass', 'drums', 'piano', 'other']
+
+def sanitize_gain(raw) -> float:
+    """
+    Acepta 0..1 ó 0..100. Devuelve 0..1.
+    """
+    if raw is None:
+        return 1.0
+    try:
+        v = float(raw)
+    except Exception:
+        return 1.0
+    if v < 0:
+        return 0.0
+    # Si es porcentaje
+    if v > 1.0:
+        v = v / 100.0
+    return max(0.0, min(1.0, v))
+
+def build_mix_filter_and_inputs(stem_dir: Path, gains: Dict[str, float]):
+    """
+    Construye inputs y filter_complex (volume + amix) para FFmpeg.
+    Retorna (inputs_list, filter_complex_str, num_inputs)
+    """
+    inputs: List[str] = []
+    filters: List[str] = []
+    amix_ins: List[str] = []
+
+    idx = 0
+    for name in STEM_ORDER:
+        stem_path = stem_dir / f"{name}.wav"
+        if not stem_path.exists():
+            continue
+        g = float(gains.get(name, 1.0))
+        if g <= 0:
+            continue  # mute
+
+        inputs += ['-i', str(stem_path)]
+        filters.append(f'[{idx}:a]volume={g}[a{idx}]')
+        amix_ins.append(f'[a{idx}]')
+        idx += 1
+
+    if not amix_ins:
+        # Si todo está muteado, metemos un "anullsrc" (silencio)
+        return [], "anullsrc=r=44100:cl=stereo[mix]", 0
+
+    filter_complex = ';'.join(filters) + ';' + ''.join(amix_ins) + f'amix=inputs={len(amix_ins)}:normalize=0[mix]'
+    return inputs, filter_complex, len(amix_ins)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Rutas
+# ──────────────────────────────────────────────────────────────────────────────
+@app.route("/", methods=["GET", "POST"])
+def home():
+    # Si alguien hace POST a "/", preservamos método al ir a /descargar (evita 405)
+    return redirect(url_for("descargar"), code=307)
+
+# ─── 1) DESCARGAR MP4 DE YOUTUBE ──────────────────────────────────────────────
+@app.route('/descargar', methods=['GET', 'POST'])
+def descargar():
+    """
+    Flujo:
+    - POST con url (sin format_id): lista calidades
+    - POST con url + format_id: descarga y envía el archivo
     """
     if request.method == 'POST':
-        url = request.form.get('url')
+        url = (request.form.get('url') or "").strip()
         format_id = request.form.get('format_id')
 
         if url and not format_id:
             try:
                 info = ytdlp_extract_info(url)
-                formats = [
-                    {
-                        'format_id': f['format_id'],
-                        'ext': f['ext'],
-                        'resolution': f.get('format_note') or f.get('height'),
-                        'filesize': f.get('filesize')
-                    }
-                    for f in info.get('formats', [])
-                    if f.get('ext') == 'mp4' and f.get('acodec') != 'none' and f.get('vcodec') != 'none'
-                ]
-                return render_template('index.html', url=url, formats=formats)
+                formats = list_mp4_formats(info)
+                return render_template('descargar.html', url=url, formats=formats)
             except Exception as e:
-                return f"<h3>Error: {e}</h3>"
+                return render_template('descargar.html', url=url, formats=None, error=str(e))
 
         elif url and format_id:
             filename = f"{uuid.uuid4()}.mp4"
             filepath = DOWNLOAD_FOLDER / filename
-
-            ydl_opts = {
-                'outtmpl': str(filepath),
-                'format': format_id,
-                **YDL_COMMON
-            }
-
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                download_by_format(url, format_id, filepath)
 
                 @after_this_request
-                def remove_file(response):
+                def _cleanup(response):
                     try:
                         if filepath.exists():
                             filepath.unlink()
-                    except Exception as e:
-                        print(f"Error eliminando archivo: {e}")
+                    except Exception as ex:
+                        print(f"Error limpiando archivo: {ex}")
                     return response
 
-                return send_file(str(filepath), as_attachment=True)
+                return send_file(str(filepath), as_attachment=True, download_name="video.mp4")
             except Exception as e:
-                return f"<h3>Error al descargar: {e}</h3>"
+                return render_template('descargar.html', url=url, formats=None, error=f"Error al descargar: {e}")
 
-    return render_template('index.html', formats=None)
+    # GET
+    return render_template('descargar.html', formats=None)
 
-# ---------- API NUEVA: INFO DE VIDEO (para previsualización) ----------
-@app.route('/api/info', methods=['POST'])
-def api_info():
-    data = request.get_json(force=True)
-    url = (data.get('url') or '').strip()
-    if not url:
-        return jsonify({'error': 'Falta URL'}), 400
+# ─── 2) SEPARAR / “MODO MOISES” (solo archivo subido) ────────────────────────
+@app.route("/separar", methods=["GET", "POST"])
+def separar():
+    if request.method == "GET":
+        return render_template("separar.html")
+
+    # SOLO archivo subido (sin URL)
+    if "file" not in request.files or not request.files["file"].filename:
+        return render_template("separar.html", error="Subí un archivo de audio o video.")
+
     try:
-        info = ytdlp_extract_info(url)
-        return jsonify({
-            'title': info.get('title'),
-            'id': info.get('id'),
-            'thumbnail': info.get('thumbnail'),
-            'duration': info.get('duration')
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        f = request.files["file"]
+        fname = secure_filename(f.filename)
+        up_path = UPLOADS_DIR / f"{uuid.uuid4()}_{fname}"
+        f.save(up_path)
 
-# ---------- API NUEVA: SEPARAR DESDE URL DE YOUTUBE ----------
-@app.route('/api/separate/upload', methods=['POST'])
-def api_separate_upload():
-    try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No se envió ningún archivo'}), 400
+        # Convertimos a WAV 44.1kHz
+        wav_path = AUDIO_DIR / f"{uuid.uuid4()}.wav"
+        ffmpeg_extract_audio(str(up_path), str(wav_path))
 
-        f = request.files['file']
-        if not f.filename:
-            return jsonify({'error': 'Archivo inválido'}), 400
+        # Separar → CARGAR EN MEMORIA (NO persistimos en disco)
+        mem_sid, present = separate_to_memory(wav_path)
+        safe_unlink(up_path)
+        safe_unlink(wav_path)
 
-        # Asegurar carpetas
-        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-        STEMS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Guardar archivo subido
-        uid = str(uuid.uuid4())
-        up_name = f"{uid}_{secure_filename(f.filename)}"
-        save_path = UPLOADS_DIR / up_name
-        f.save(save_path)
-
-        # Convertir a WAV para Spleeter
-        wav_path = STEMS_DIR / f"{uid}.wav"
-        ffmpeg_extract_audio(str(save_path), str(wav_path))
-
-        # Separar en 5 stems (voz, bajo, piano, batería, otros)
-        out_dir = STEMS_DIR / f"stems_{uid}"
-        run_spleeter(str(wav_path), out_dir, stems=5)
-
-        # Refinar 'other.wav' en 3 guitarras (lead / left / right)
-        g3 = refine_guitars_3(out_dir)  # debe devolver dict con rutas o booleanos por cada guitarra
-
-        # Construir mapa final (voz, 3 guitarras, bajo, teclado, batería)
-        stems = {}
-        if (out_dir / "vocals.wav").exists():
-            stems["vocals"] = f"/media/stems/stems_{uid}/vocals.wav"
-        if (out_dir / "bass.wav").exists():
-            stems["bass"] = f"/media/stems/stems_{uid}/bass.wav"
-        if (out_dir / "piano.wav").exists():
-            stems["piano"] = f"/media/stems/stems_{uid}/piano.wav"
-        if (out_dir / "drums.wav").exists():
-            stems["drums"] = f"/media/stems/stems_{uid}/drums.wav"
-        if g3.get("guitar_lead"):
-            stems["guitar_lead"] = f"/media/stems/stems_{uid}/guitar_lead.wav"
-        if g3.get("guitar_left"):
-            stems["guitar_left"] = f"/media/stems/stems_{uid}/guitar_left.wav"
-        if g3.get("guitar_right"):
-            stems["guitar_right"] = f"/media/stems/stems_{uid}/guitar_right.wav"
-
-        return jsonify({
-            'ok': True,
-            'uid': uid,
-            'uploaded_url': f"/media/uploads/{up_name}",
-            'stems': stems
-        })
+        return render_template(
+            "separar.html",
+            src_name=Path(wav_path).name,
+            mem_session=mem_sid,
+            stems_present=present
+        )
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return render_template("separar.html", error=str(e))
 
-# ---------- SERVIR MEDIOS ----------
+
+# ─── Servir archivos estáticos de stems ───────────────────────────────────────
 @app.route('/media/stems/<path:subpath>')
 def serve_stems(subpath):
     return send_from_directory(STEMS_DIR, subpath, as_attachment=False)
@@ -299,5 +320,140 @@ def serve_stems(subpath):
 def serve_upload(filename):
     return send_from_directory(UPLOADS_DIR, filename, as_attachment=False)
 
+@app.route('/mem_stem/<sid>/<name>.wav')
+def mem_stem(sid, name):
+    _purge_mem()
+    name = name.lower()
+    with MEM_LOCK:
+        pack = MEM_STEMS.get(sid)
+        if not pack:
+            abort(404)
+        data = pack["stems"].get(name)
+        if not data:
+            abort(404)
+    return send_file(io.BytesIO(data), mimetype='audio/wav', as_attachment=False, download_name=f"{name}.wav")
+
+
+# ─── 3) STREAM del MIX “estilo Moises” ───────────────────────────────────────
+@app.route("/stream_mix")
+def stream_mix():
+    """
+    Stream del TEMA COMPLETO mezclado en vivo (un solo audio), con volúmenes/mutes por instrumento.
+    Query ej:
+      /stream_mix?folder=stems_ab12cd34&vocals=100&guitar=0&bass=80&drums=100&piano=0&other=100&t=123
+    Acepta 0..1 ó 0..100 (porcentaje). 't' = segundos para mantener la posición al mover sliders.
+    """
+    folder = (request.args.get("folder") or "").strip()
+    if not folder:
+        return "Falta 'folder'", 400
+
+    stem_dir = STEMS_DIR / folder
+    if not stem_dir.exists():
+        return "Carpeta inexistente", 404
+
+    # segundos desde inicio (para no volver al comienzo al refrescar mezcla)
+    try:
+        start_t = float(request.args.get("t") or 0.0)
+        if start_t < 0:
+            start_t = 0.0
+    except:
+        start_t = 0.0
+
+    # gains saneados por instrumento
+    gains = {name: sanitize_gain(request.args.get(name)) for name in STEM_ORDER}
+    inputs, filter_complex, n = build_mix_filter_and_inputs(stem_dir, gains)
+
+    if n == 0:
+        # stream de 2s de silencio (sin cache)
+        def silence_stream():
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+                   "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                   "-t", "2", "-f", "wav", "-"]
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            try:
+                for chunk in iter(lambda: p.stdout.read(4096), b""):
+                    yield chunk
+            finally:
+                p.kill()
+        return Response(stream_with_context(silence_stream()),
+                        mimetype="audio/wav")
+
+    def generate():
+        # Insertamos -ss <t> ANTES de cada -i (seeking por input) para mantener posición
+        seeked_inputs = []
+        it = iter(inputs)  # inputs = ['-i', path, '-i', path, ...]
+        for flag, val in zip(it, it):
+            seeked_inputs.extend(['-ss', str(start_t), flag, val])
+
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            *seeked_inputs,
+            "-filter_complex", filter_complex,
+            "-map", "[mix]",
+            "-f", "wav", "-"  # stream WAV
+        ]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        try:
+            for chunk in iter(lambda: p.stdout.read(4096), b""):
+                yield chunk
+        finally:
+            p.kill()
+
+    headers = {"Cache-Control": "no-store, max-age=0"}
+    return Response(stream_with_context(generate()),
+                    mimetype="audio/wav",
+                    headers=headers)
+
+
+# ─── 4) EXPORTAR mezcla a archivo (descargable) ──────────────────────────────
+@app.route('/mix', methods=['POST'])
+def mix_stems():
+    """
+    Recibe JSON:
+      { "folder": "stems_xxxx", "gains": { "vocals":0..1, "guitar":0..1, ... } }
+    Devuelve JSON con url y filename.
+    """
+    data = request.get_json(silent=True) or {}
+    folder = (data.get('folder') or "").strip()
+    gains = data.get('gains') or {}
+
+    if not folder or not isinstance(gains, dict):
+        return jsonify({"error": "Parámetros inválidos"}), 400
+
+    stem_dir = STEMS_DIR / folder
+    if not stem_dir.exists():
+        return jsonify({"error": "Carpeta no encontrada"}), 404
+
+    # Sanitizamos
+    gains = {k: sanitize_gain(v) for k, v in gains.items()}
+
+    inputs, filter_complex, n = build_mix_filter_and_inputs(stem_dir, gains)
+    if n == 0:
+        return jsonify({"error": "Todos los instrumentos muteados"}), 400
+
+    mix_out = stem_dir / f"mix_{uuid.uuid4().hex[:6]}.wav"
+    cmd = [
+        'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+        *inputs,
+        '-filter_complex', filter_complex,
+        '-map', '[mix]',
+        '-c:a', 'pcm_s16le',
+        str(mix_out)
+    ]
+
+    try:
+        subprocess.check_call(cmd)
+    except Exception as e:
+        return jsonify({"error": f"ffmpeg: {e}"}), 500
+
+    return jsonify({
+        "url": url_for('serve_stems', subpath=f"{folder}/{mix_out.name}"),
+        "filename": mix_out.name
+    })
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    # host="0.0.0.0" si lo corrés en un server público
     app.run(debug=True)
