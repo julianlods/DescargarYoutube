@@ -9,19 +9,129 @@ from pathlib import Path
 from typing import Dict, List
 from tempfile import TemporaryDirectory
 from threading import Lock
-
 from flask import (
     Flask, render_template, request, redirect, url_for, send_file,
     send_from_directory, abort, after_this_request, jsonify,
-    Response, stream_with_context
+    Response, stream_with_context, session
 )
 from werkzeug.utils import secure_filename
 import yt_dlp
+import numpy as np, soundfile as sf, os
+
+# --- Split simple de guitarra en Lead vs Rítmica (energía + suavizado) ---
+def split_guitar_lead_rhythm(in_wav: str, out_lead: str, out_rhythm: str):
+    """
+    Genera dos archivos a partir de guitar.wav:
+      - out_lead    : solo (lead)
+      - out_rhythm  : acompañamiento (complemento)
+    Estrategia: RMS por ventana + percentil, une gaps cortos y aplica fades para evitar clics.
+    """
+    if not os.path.isfile(in_wav):
+        return False
+
+    try:
+        y, sr = sf.read(in_wav, always_2d=True)     # (N, C)
+        mono = y.mean(axis=1)
+
+        # Ventaneo
+        win = max(1024, int(sr * 0.046))  # ~46 ms
+        hop = max(256,  int(sr * 0.010))  # ~10 ms
+        n   = len(mono)
+        nF  = 1 + max(0, (n - win) // hop)
+
+        # RMS por frame
+        rms = np.empty(nF, dtype=np.float32)
+        for i in range(nF):
+            s = mono[i*hop:i*hop+win]
+            if s.size == 0: s = np.zeros(1, dtype=np.float32)
+            rms[i] = np.sqrt((s*s).mean() + 1e-12)
+
+        # Suavizado (media móvil corta)
+        w = 12
+        rms_s = np.copy(rms)
+        acc = 0.0; q = []
+        for i,x in enumerate(rms):
+            q.append(x); acc += x
+            if len(q) > w: acc -= q.pop(0)
+            rms_s[i] = acc / len(q)
+
+        # Umbral por percentil
+        th = float(np.quantile(rms_s, 0.80) * 0.9)
+        is_lead = rms_s > th
+
+        # Postproceso: unir gaps < 0.25s y descartar tramos < 0.5s
+        min_frames  = int(0.50 / (hop/sr))
+        join_frames = int(0.25 / (hop/sr))
+
+        # a intervalos
+        intervals = []
+        on = False; s = 0
+        for i,flag in enumerate(is_lead):
+            if flag and not on:
+                on = True; s = i
+            elif not flag and on:
+                on = False; intervals.append([s, i-1])
+        if on: intervals.append([s, len(is_lead)-1])
+
+        # unir cercanos
+        merged = []
+        for seg in intervals:
+            if not merged:
+                merged.append(seg); continue
+            last = merged[-1]
+            if seg[0] - last[1] <= join_frames:
+                last[1] = max(last[1], seg[1])
+            else:
+                merged.append(seg)
+
+        # filtrar por duración mínima
+        merged = [seg for seg in merged if (seg[1]-seg[0]+1) >= min_frames]
+
+        # máscaras por muestra
+        lead_mask = np.zeros(n, dtype=np.float32)
+        for s_f,e_f in merged:
+            s_smp = s_f*hop
+            e_smp = min(n-1, e_f*hop + win)
+            lead_mask[s_smp:e_smp] = 1.0
+
+        # fades en bordes (10 ms)
+        fade = max(1, int(sr*0.010))
+        # ramp up
+        i = 1
+        while i < n:
+            if lead_mask[i-1]==0 and lead_mask[i]==1:
+                end = min(i+fade, n)
+                ramp = np.linspace(0,1,end-i, dtype=np.float32)
+                lead_mask[i:end] = np.maximum(lead_mask[i:end], ramp)
+            if lead_mask[i-1]==1 and lead_mask[i]==0:
+                end = min(i+fade, n)
+                ramp = np.linspace(1,0,end-i, dtype=np.float32)
+                lead_mask[i:end] = np.minimum(lead_mask[i:end], ramp)
+            i += 1
+
+        rhythm_mask = 1.0 - lead_mask
+
+        # aplica máscaras a todas las columnas (estéreo)
+        lead   = (y.T * lead_mask).T
+        rhythm = (y.T * rhythm_mask).T
+
+        sf.write(out_lead,   lead,   sr)
+        sf.write(out_rhythm, rhythm, sr)
+        return True
+    except Exception:
+        # fallback: si falla, deja todo en rítmica y lead vacío
+        try:
+            sf.write(out_lead,   np.zeros_like(y), sr)
+            sf.write(out_rhythm, y,                sr)
+        except Exception:
+            return False
+        return True
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config básica
 # ──────────────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev')
 app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # hasta 1GB
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -165,6 +275,22 @@ def separate_to_memory(input_wav_path: Path):
             if f.exists():
                 stems_bytes[name] = f.read_bytes()
 
+        # ── 1.b) Experimental: dividir guitarra en Lead / Rítmica si existe ─────────
+        gtr_wav = tmpdir / "guitar.wav"
+        if gtr_wav.exists():
+            out_lead   = tmpdir / "gtr_lead.wav"
+            out_rhythm = tmpdir / "gtr_rhythm.wav"
+            try:                
+                ok = split_guitar_lead_rhythm(str(gtr_wav), str(out_lead), str(out_rhythm))
+                if ok and out_lead.exists() and out_rhythm.exists():
+                    # sumá gtr_lead / gtr_rhythm pero conservá 'guitar' para separar.html
+                    stems_bytes['gtr_lead']   = out_lead.read_bytes()
+                    stems_bytes['gtr_rhythm'] = out_rhythm.read_bytes()
+                    # NO removemos 'guitar'
+            except Exception:
+                # si falla el análisis, dejamos la guitarra original sin cambios
+                pass
+
     # Guardamos en memoria con un id de sesión
     sid = uuid.uuid4().hex[:10]
     with MEM_LOCK:
@@ -297,6 +423,8 @@ def separar():
 
         # Separar → CARGAR EN MEMORIA (NO persistimos en disco)
         mem_sid, present = separate_to_memory(wav_path)
+        session['mem_session'] = mem_sid
+        session['stems_present'] = present
         safe_unlink(up_path)
         safe_unlink(wav_path)
 
@@ -310,6 +438,15 @@ def separar():
     except Exception as e:
         return render_template("separar.html", error=str(e))
 
+# ─── Ruta experimental ───────────────────────────────────────
+@app.get("/experimental")
+def experimental():
+    mem_session   = session.get("mem_session")
+    stems_present = session.get("stems_present") or []
+    return render_template("experimental.html",
+                           mem_session=mem_session,
+                           stems_present=stems_present,
+                           error=None)
 
 # ─── Servir archivos estáticos de stems ───────────────────────────────────────
 @app.route('/media/stems/<path:subpath>')

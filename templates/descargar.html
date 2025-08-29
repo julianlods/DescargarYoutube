@@ -6,16 +6,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 text-gray-900 min-h-screen flex items-center justify-center">
+<body class="bg-gray-100 text-gray-900 min-h-screen flex items-center justify-center pt-20">
+  <!-- Menú superior fijo (centrado) -->
+  <nav class="fixed top-0 inset-x-0 bg-white/80 backdrop-blur border-b border-gray-200/60 shadow-sm">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex justify-center">
+      <div class="inline-flex items-center gap-2 bg-gray-100/70 rounded-full p-1 ring-1 ring-gray-200">
+        <a href="{{ url_for('descargar') }}"
+           class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
+          Descargar
+        </a>
+        <a href="{{ url_for('separar') }}"
+           class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
+          Separar / Mutear
+        </a>
+        <a href="{{ url_for('experimental') }}"
+           class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
+          Experimental
+        </a>
+      </div>
+    </div>
+  </nav>
+
   <div class="w-full max-w-3xl bg-white p-6 rounded-xl shadow-xl">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold mb-6 text-red-600">Descargar de YouTube</h1>
-
-      <!-- Link a SEPARAR -->
-      <a href="{{ url_for('separar') }}"
-         class="mb-6 inline-flex items-center gap-2 border border-red-500 text-red-600 hover:bg-red-50 px-3 py-2 rounded-md text-sm font-semibold transition">
-        Separar / Mutear pistas
-      </a>
     </div>
 
     {% if error %}
@@ -59,7 +73,7 @@
 
   <!-- Popup/Toast -->
   <div id="toast" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 hidden">
-    <div class="bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg">
+    <div class="bg-green-600 text-white px-4 py-3 rounded-lg shadow-lg">
       Archivo descargado
     </div>
   </div>
@@ -129,7 +143,7 @@
         toast.querySelector('div').className =
           (error
             ? 'bg-red-700 text-white px-4 py-3 rounded-lg shadow-lg'
-            : 'bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg');
+            : 'bg-green-600 text-white px-4 py-3 rounded-lg shadow-lg');
         toast.classList.remove('hidden');
         setTimeout(() => toast.classList.add('hidden'), 5000);
       }
