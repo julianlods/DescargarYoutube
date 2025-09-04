@@ -6,22 +6,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 text-gray-900 min-h-screen flex items-center justify-center pt-20">
+<body class="bg-gray-100 text-gray-900 min-h-screen flex items-start justify-center pt-20">
   <!-- Menú superior fijo (centrado) -->
   <nav class="fixed top-0 inset-x-0 bg-white/80 backdrop-blur border-b border-gray-200/60 shadow-sm">
     <div class="max-w-4xl mx-auto px-4 py-3 flex justify-center">
       <div class="inline-flex items-center gap-2 bg-gray-100/70 rounded-full p-1 ring-1 ring-gray-200">
         <a href="{{ url_for('descargar') }}"
-           class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
+          class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
           Descargar
         </a>
         <a href="{{ url_for('separar') }}"
-           class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
+          class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
           Separar / Mutear
-        </a>
-        <a href="{{ url_for('experimental') }}"
-           class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
-          Experimental
         </a>
       </div>
     </div>
@@ -86,54 +82,75 @@
 
         <!-- Mezclador (orden fijo; Guitarra cae a 'other' si no existe 'guitar') -->
         <div id="mixer" class="space-y-4">
-          {% set order  = ['vocals','guitar','bass','drums','piano'] %}
-          {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','piano':'Piano'} %}
+          {% set order  = ['vocals','guitar','bass','drums','keyboard'] %}
+          {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','keyboard':'Teclado'} %}
 
           {% for name in order %}
 
-            {# --- casos NO guitarra (render normal) --- #}
-            {% if name != 'guitar' %}
-              {% if stems_present and (name in stems_present) %}
-              <div class="border border-gray-200 rounded-lg p-4">
-                <div class="flex items-center justify-between gap-4">
-                  <div class="flex items-center gap-3">
-                    <input type="checkbox" class="w-4 h-4 accent-red-600" checked
-                        data-stem="{{ name }}"
-                        aria-label="Silenciar {{ labels[name] }}" title="Silenciar {{ labels[name] }}" />
-                    <strong class="w-28">{{ labels[name] }}</strong>
-                  </div>
-                  <div class="flex-1 flex items-center gap-3">
-                    <input type="range" min="0" max="100" value="100" step="1"
-                        class="w-full accent-red-600" data-stem="{{ name }}"
-                        aria-label="Volumen de {{ labels[name] }}" title="Volumen de {{ labels[name] }}" />
-                    <span class="text-sm w-12 text-right" data-meter="{{ name }}">100%</span>
+            {# --- GUITARRA: SOLO si existe 'guitar' --- #}
+            {% if name == 'guitar' %}
+              {% if stems_present and ('guitar' in stems_present) %}
+                <div class="border border-gray-200 rounded-lg p-4">
+                  <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                      <input type="checkbox" class="w-4 h-4 accent-red-600" checked
+                            data-stem="guitar"
+                            aria-label="Silenciar Guitarra" title="Silenciar Guitarra" />
+                      <strong class="w-28">Guitarra</strong>
+                    </div>
+                    <div class="flex-1 flex items-center gap-3">
+                      <input type="range" min="0" max="100" value="100" step="1"
+                            class="w-full accent-red-600" data-stem="guitar"
+                            aria-label="Volumen de Guitarra" title="Volumen de Guitarra" />
+                      <span class="text-sm w-12 text-right" data-meter="guitar">100%</span>
+                    </div>
                   </div>
                 </div>
-              </div>
               {% endif %}
 
-            {# --- caso Guitarra: usa 'guitar' si existe; si no, cae a 'other' --- #}
-            {% else %}
-              {% set has_guitar = stems_present and ('guitar' in stems_present) %}
-              {% set has_other  = stems_present and ('other'  in stems_present) %}
-              {% if has_guitar or has_other %}
-              {% set stem_key = 'guitar' if has_guitar else 'other' %}
-              <div class="border border-gray-200 rounded-lg p-4">
-                <div class="flex items-center justify-between gap-4">
-                  <div class="flex items-center gap-3">
-                    <input type="checkbox" class="w-4 h-4 accent-red-600" checked
-                        data-stem="{{ stem_key }}"
-                        aria-label="Silenciar Guitarra" title="Silenciar Guitarra" />
-                    <strong class="w-28">Guitarra</strong>
-                  </div>
-                  <div class="flex-1 flex items-center gap-3">
-                    <input type="range" min="0" max="100" value="100" step="1"
-                        class="w-full accent-red-600" data-stem="{{ stem_key }}"
-                        aria-label="Volumen de Guitarra" title="Volumen de Guitarra" />
-                    <span class="text-sm w-12 text-right" data-meter="{{ stem_key }}">100%</span>
+            {# --- TECLADO ELÉCTRICO: usa 'piano' o, si no existe, 'other' --- #}
+            {% elif name == 'piano' %}
+              {% set has_piano = stems_present and ('piano' in stems_present) %}
+              {% set has_other = stems_present and ('other' in stems_present) %}
+              {% if has_piano or has_other %}
+                {% set stem_key = 'piano' if has_piano else 'other' %}
+                <div class="border border-gray-200 rounded-lg p-4">
+                  <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                      <input type="checkbox" class="w-4 h-4 accent-red-600" checked
+                            data-stem="{{ stem_key }}"
+                            aria-label="Silenciar Teclado eléctrico" title="Silenciar Teclado eléctrico" />
+                      <strong class="w-28">Teclado</strong>
+                    </div>
+                    <div class="flex-1 flex items-center gap-3">
+                      <input type="range" min="0" max="100" value="100" step="1"
+                            class="w-full accent-red-600" data-stem="{{ stem_key }}"
+                            aria-label="Volumen de Teclado eléctrico" title="Volumen de Teclado eléctrico" />
+                      <span class="text-sm w-12 text-right" data-meter="{{ stem_key }}">100%</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              {% endif %}
+
+            {# --- RESTO NORMAL (voz, bajo, batería) --- #}
+            {% else %}
+              {% if stems_present and (name in stems_present) %}
+                <div class="border border-gray-200 rounded-lg p-4">
+                  <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                      <input type="checkbox" class="w-4 h-4 accent-red-600" checked
+                            data-stem="{{ name }}"
+                            aria-label="Silenciar {{ labels[name] }}" title="Silenciar {{ labels[name] }}" />
+                      <strong class="w-28">{{ labels[name] }}</strong>
+                    </div>
+                    <div class="flex-1 flex items-center gap-3">
+                      <input type="range" min="0" max="100" value="100" step="1"
+                            class="w-full accent-red-600" data-stem="{{ name }}"
+                            aria-label="Volumen de {{ labels[name] }}" title="Volumen de {{ labels[name] }}" />
+                      <span class="text-sm w-12 text-right" data-meter="{{ name }}">100%</span>
+                    </div>
+                  </div>
+                </div>
               {% endif %}
             {% endif %}
 
@@ -150,7 +167,7 @@
       // === Config desde backend ===
       const mem = "{{ mem_session }}";
       const stems = {{ stems_present|tojson|safe if stems_present else '[]' }};
-      const order = ['vocals','guitar','bass','drums','piano','other'];
+      const order = ['vocals','guitar','bass','drums','keyboard','other'];
 
       // === Players en memoria (uno por stem) ===
       const audios = {};        // nombre -> HTMLAudioElement

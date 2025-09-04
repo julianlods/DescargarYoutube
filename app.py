@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List
 from tempfile import TemporaryDirectory
 from threading import Lock
+from yt_dlp import YoutubeDL
 from flask import (
     Flask, render_template, request, redirect, url_for, send_file,
     send_from_directory, abort, after_this_request, jsonify,
@@ -268,12 +269,14 @@ def separate_to_memory(input_wav_path: Path):
     with TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         run_demucs6(str(input_wav_path), tmpdir)  # genera .wav en tmpdir y los aplana
-
+        
         stems_bytes = {}
-        for name in STEM_ORDER:
-            f = tmpdir / f"{name}.wav"
-            if f.exists():
-                stems_bytes[name] = f.read_bytes()
+        for native_name in ['vocals', 'drums', 'bass', 'other', 'guitar', 'piano']:
+            f = tmpdir / f"{native_name}.wav"
+            if not f.exists():
+                continue
+            key = 'keyboard' if native_name == 'piano' else native_name
+            stems_bytes[key] = f.read_bytes()
 
         # ── 1.b) Experimental: dividir guitarra en Lead / Rítmica si existe ─────────
         gtr_wav = tmpdir / "guitar.wav"
@@ -302,7 +305,7 @@ def separate_to_memory(input_wav_path: Path):
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers de mix
 # ──────────────────────────────────────────────────────────────────────────────
-STEM_ORDER = ['vocals', 'guitar', 'bass', 'drums', 'piano', 'other']
+STEM_ORDER = ['vocals', 'guitar', 'bass', 'drums', 'keyboard', 'other']
 
 def sanitize_gain(raw) -> float:
     """
@@ -333,6 +336,10 @@ def build_mix_filter_and_inputs(stem_dir: Path, gains: Dict[str, float]):
     idx = 0
     for name in STEM_ORDER:
         stem_path = stem_dir / f"{name}.wav"
+        if (not stem_path.exists()) and name == 'keyboard':
+            alt = stem_dir / "piano.wav"
+            if alt.exists():
+                stem_path = alt
         if not stem_path.exists():
             continue
         g = float(gains.get(name, 1.0))
