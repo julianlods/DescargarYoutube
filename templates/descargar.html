@@ -34,37 +34,81 @@
 
     <!-- action explícito -->
     <form id="dlForm" method="POST" action="{{ url_for('descargar') }}" class="space-y-6">
-      <div>
-        <label class="block text-sm font-medium mb-1">URL del video</label>
-        <input id="url" name="url" required value="{{ url or '' }}"
-               class="w-full p-3 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" />
+
+      <!-- PASO 1 -->
+      <div class="space-y-2">
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">1</span>
+          <h3 class="text-base font-semibold">Pegá la URL del video</h3>
+        </div>
+        <input id="url" name="url" type="url" required value="{{ url or '' }}"
+              class="w-full p-3 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" />
       </div>
 
-      {% if formats %}
-        <div id="formatSection">
-          <label class="block text-sm font-medium mb-1">Calidad</label>
-          <select name="format_id" required
-                  class="w-full p-3 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500">
-            {% for f in formats %}
-              <option value="{{ f.format_id }}">
-                {{ f.resolution }} ({{ f.ext }}){% if f.filesize %} — {{ (f.filesize/1024/1024)|round(1) }} MB{% endif %}
-              </option>
-            {% endfor %}
-          </select>
+      {% if not formats %}
+        <!-- PASO 2 -->
+        <div id="step2" class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">2</span>
+            <h3 class="text-base font-semibold">Buscá la calidad</h3>
+          </div>
+          <button id="submitBtn" type="submit"
+                  class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
+            Buscar calidad
+          </button>
+        </div>
+      {% else %}
+
+        <!-- PASO 3: Elegí la calidad y descargá -->
+        <div id="step3" class="mt-6">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">3</span>
+            <h3 class="font-semibold">Elegí la calidad y descargá</h3>
+          </div>
+
+          <div id="downloadForm" class="space-y-3">
+            <label class="block text-sm font-medium">Formato</label>
+            <select
+              name="format_id"
+              id="format_id"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              required
+            >
+              {% for f in formats %}
+                {% set height = f.get('height') %}
+                {% set res    = f.get('resolution') %}
+                {% set note   = f.get('format_note') %}
+                {% set fps    = f.get('fps') %}
+                {% set ext    = f.get('ext') %}
+                <option value="{{ f['format_id'] }}">
+                  {%- if height %}{{ height }}p
+                  {%- elif res %}{{ res }}
+                  {%- elif note %}{{ note|title }}
+                  {%- else %}{{ f['format_id'] }}
+                  {%- endif -%}
+                  {%- if fps %} {{ fps }}fps{% endif -%}
+                  {%- if ext %} · {{ ext|upper }}{% endif -%}
+                </option>
+              {% endfor %}
+            </select>
+
+            <!-- Botones: Descargar (2/3) + Borrar (1/3) -->
+            <div class="grid grid-cols-3 gap-3 pt-2">
+              <button id="downloadBtn" type="submit"
+                class="col-span-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-md transition">
+                Descargar
+              </button>
+
+              <button id="clearBtn" type="button"
+                class="col-span-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-md transition">
+                Borrar
+              </button>
+            </div>
+          </div>
         </div>
       {% endif %}
 
-      <div class="pt-2">
-        <button id="submitBtn" type="submit"
-          class="w-full {{ 'bg-red-600 hover:bg-red-700' if formats else 'bg-red-500 hover:bg-red-600' }} text-white font-semibold py-3 rounded-md transition">
-          {{ 'Descargar' if formats else 'Buscar calidad' }}
-        </button>
-      </div>
     </form>
-
-    <p class="text-sm text-gray-600 mt-6">
-      1) Pegá la URL y presioná <b>“Buscar calidad”</b>. 2) Elegí el formato y presioná <b>“Descargar”</b>.
-    </p>
   </div>
 
   <!-- Popup/Toast -->
@@ -81,7 +125,8 @@
 
       form.addEventListener('submit', async function (e) {
         // Interceptamos SOLO cuando es el segundo paso (hay format_id a elegir).
-        const hasFormatSelect = !!form.querySelector('select[name="format_id"]');
+        const fmtSel = form.querySelector('select[name="format_id"]');
+        const hasFormatSelect = !!(fmtSel && fmtSel.options && fmtSel.options.length);
         if (!hasFormatSelect) return; // Dejar POST normal para "Buscar calidad"
 
         e.preventDefault();
@@ -90,7 +135,7 @@
         const fd = new FormData(form);
 
         // Evitar doble click
-        const btn = document.getElementById('submitBtn');
+        const btn = document.getElementById('downloadBtn') || document.getElementById('submitBtn');
         const oldLabel = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Descargando…';
@@ -115,14 +160,12 @@
           a.remove();
           URL.revokeObjectURL(url);
 
-          // Limpiar campos y UI
-          const urlInput = document.getElementById('url');
-          if (urlInput) urlInput.value = '';
-          const formatSection = document.getElementById('formatSection');
-          if (formatSection) formatSection.remove();
-
-          // Mostrar popup
+          // Mostrar popup y volver al estado inicial después de 4s
           showToast('Archivo descargado');
+          setTimeout(() => {
+            window.location.href = "{{ url_for('descargar') }}";
+          }, 4000);
+
         } catch (err) {
           console.error(err);
           showToast('Hubo un error en la descarga', true);
@@ -141,9 +184,23 @@
             ? 'bg-red-700 text-white px-4 py-3 rounded-lg shadow-lg'
             : 'bg-green-600 text-white px-4 py-3 rounded-lg shadow-lg');
         toast.classList.remove('hidden');
-        setTimeout(() => toast.classList.add('hidden'), 5000);
+        setTimeout(() => toast.classList.add('hidden'), 4000);
       }
+    })();  
+
+    (function () {
+      const form     = document.getElementById('dlForm');
+      const clearBtn = document.getElementById('clearBtn');
+      if (!clearBtn) return;
+
+      clearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (form) form.reset();
+        // Volver al estado inicial (Paso 1 + Paso 2 visibles)
+        window.location.href = "{{ url_for('descargar') }}";
+      });
     })();
+
   </script>
 </body>
 </html>

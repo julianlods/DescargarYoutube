@@ -34,21 +34,72 @@
 
     <!-- Subida de archivo (sin YouTube) -->
     <form method="POST" action="{{ url_for('separar') }}" enctype="multipart/form-data" class="space-y-6">
-      <div>
-        <label class="block text-sm font-medium mb-1">Subir archivo (audio o video)</label>
-        <input type="file" name="file" accept="audio/*,video/*" required
-               class="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4
-                      file:rounded-md file:border-0 file:text-sm file:font-semibold
-                      file:bg-red-600 file:text-white hover:file:bg-red-700" />
+      <!-- PASO 1 -->
+      <div class="space-y-2">
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">1</span>
+          <h3 class="text-base font-semibold">Subí el archivo (audio o video)</h3>
+        </div>
+        <input
+          type="file"
+          name="file"
+          accept="audio/*,video/*"
+          required
+          class="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4
+                file:rounded-md file:border-0 file:text-sm file:font-semibold
+                file:bg-red-600 file:text-white hover:file:bg-red-700"
+        />
       </div>
 
       <div class="pt-2">
-        <button type="submit"
+        <button id="separarBtn" type="submit"
                 class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
           Separar
         </button>
       </div>
     </form>
+
+    <!-- Overlay de “Separando…” -->
+    <div id="busyOverlay" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden">
+      <div class="absolute inset-0 flex items-center justify-center p-6">
+        <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm text-center">
+          <div class="mx-auto mb-3 h-10 w-10 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+          <h3 class="text-lg font-semibold mb-1">Separando…</h3>
+          <p class="text-sm text-gray-600 mb-4">Esto puede tardar varios minutos. No cierres esta pestaña.</p>
+          <div class="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div class="h-full bg-red-600 indeterminate"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <style>
+    @keyframes indeterminate {
+      0%   { transform: translateX(-100%); width: 40%; }
+      50%  { transform: translateX(25%);   width: 55%; }
+      100% { transform: translateX(100%);  width: 40%; }
+    }
+    .indeterminate { animation: indeterminate 1.2s linear infinite; }
+    </style>
+
+    <script>
+    (function () {
+      // Muestra el overlay y deshabilita el botón cuando empieza el POST
+      const form = document.querySelector("form[action='{{ url_for('separar') }}']");
+      const overlay = document.getElementById('busyOverlay');
+      const btn = document.getElementById('separarBtn');
+      if (!form) return;
+
+      form.addEventListener('submit', function () {
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Separando…';
+        }
+        if (overlay) overlay.classList.remove('hidden');
+        // OJO: no deshabilitamos el <input type="file"> para que se envíe correctamente.
+      });
+    })();
+    </script>
 
     {% if mem_session %}
       <div class="mt-8">
@@ -82,9 +133,8 @@
 
         <!-- Mezclador (orden fijo; Guitarra cae a 'other' si no existe 'guitar') -->
         <div id="mixer" class="space-y-4">
-          {% set order  = ['vocals','guitar','bass','drums','keyboard'] %}
-          {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','keyboard':'Teclado'} %}
-
+          {% set order  = ['vocals','guitar','bass','drums','piano'] %}
+          {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','piano':'Teclado'} %}
           {% for name in order %}
 
             {# --- GUITARRA: SOLO si existe 'guitar' --- #}
@@ -108,7 +158,7 @@
                 </div>
               {% endif %}
 
-            {# --- TECLADO ELÉCTRICO: usa 'piano' o, si no existe, 'other' --- #}
+            {# --- TECLADO (usa 'piano' o, si no existe, 'other') --- #}
             {% elif name == 'piano' %}
               {% set has_piano = stems_present and ('piano' in stems_present) %}
               {% set has_other = stems_present and ('other' in stems_present) %}
@@ -119,13 +169,13 @@
                     <div class="flex items-center gap-3">
                       <input type="checkbox" class="w-4 h-4 accent-red-600" checked
                             data-stem="{{ stem_key }}"
-                            aria-label="Silenciar Teclado eléctrico" title="Silenciar Teclado eléctrico" />
+                            aria-label="Silenciar Teclado" title="Silenciar Teclado" />
                       <strong class="w-28">Teclado</strong>
                     </div>
                     <div class="flex-1 flex items-center gap-3">
                       <input type="range" min="0" max="100" value="100" step="1"
                             class="w-full accent-red-600" data-stem="{{ stem_key }}"
-                            aria-label="Volumen de Teclado eléctrico" title="Volumen de Teclado eléctrico" />
+                            aria-label="Volumen de Teclado" title="Volumen de Teclado" />
                       <span class="text-sm w-12 text-right" data-meter="{{ stem_key }}">100%</span>
                     </div>
                   </div>
@@ -167,7 +217,7 @@
       // === Config desde backend ===
       const mem = "{{ mem_session }}";
       const stems = {{ stems_present|tojson|safe if stems_present else '[]' }};
-      const order = ['vocals','guitar','bass','drums','keyboard','other'];
+      const order = ['vocals','guitar','bass','drums','piano','other'];
 
       // === Players en memoria (uno por stem) ===
       const audios = {};        // nombre -> HTMLAudioElement
