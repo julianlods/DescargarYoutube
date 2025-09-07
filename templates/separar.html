@@ -51,35 +51,64 @@
         />
       </div>
 
-      <div class="pt-2">
+      <div class="grid grid-cols-3 gap-3 pt-2">
         <button id="separarBtn" type="submit"
-                class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
+                class="col-span-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
           Separar
+        </button>
+
+        <button id="clearBtn" type="button"
+                class="col-span-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-3 rounded-md transition">
+          Borrar
         </button>
       </div>
     </form>
 
-    <!-- Overlay de “Separando…” -->
+    <!-- Overlay de “Separando…” (sin barra) -->
     <div id="busyOverlay" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden">
       <div class="absolute inset-0 flex items-center justify-center p-6">
         <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm text-center">
           <div class="mx-auto mb-3 h-10 w-10 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
           <h3 class="text-lg font-semibold mb-1">Separando…</h3>
-          <p class="text-sm text-gray-600 mb-4">Esto puede tardar varios minutos. No cierres esta pestaña.</p>
-          <div class="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-            <div class="h-full bg-red-600 indeterminate"></div>
-          </div>
+          <p class="text-sm text-gray-600">Esto puede tardar varios minutos. No cierres esta pestaña.</p>
         </div>
       </div>
     </div>
 
     <style>
-    @keyframes indeterminate {
-      0%   { transform: translateX(-100%); width: 40%; }
-      50%  { transform: translateX(25%);   width: 55%; }
-      100% { transform: translateX(100%);  width: 40%; }
-    }
-    .indeterminate { animation: indeterminate 1.2s linear infinite; }
+      /* Menos separación entre tarjetas del mixer */
+      #mixer > * + * { margin-top: .375rem !important; }         /* 6px */
+      @media (min-width:640px){
+        #mixer > * + * { margin-top: .5rem !important; }         /* 8px en sm+ */
+      }
+
+      /* Tarjetas más compactas */
+      #mixer .border.rounded-lg { padding: .5rem .75rem !important; }  /* py-2 px-3 aprox */
+      #mixer .flex.items-center.justify-between { gap: .5rem !important; }
+
+      /* Labels y medidores más chicos */
+      #mixer strong.w-28 { width: 5.25rem !important; }          /* ~84px */
+      #mixer [data-meter] { width: 2rem !important; text-align: right; font-size: .875rem; }
+
+      /* Slider más finito (Chrome/Edge/Safari) */
+      #mixer input[type="range"] { height: 18px; }
+      #mixer input[type="range"]::-webkit-slider-runnable-track {
+        height: 4px; border-radius: 9999px;
+      }
+      #mixer input[type="range"]::-webkit-slider-thumb {
+        width: 14px; height: 14px; margin-top: -5px; border-radius: 9999px;
+      }
+
+      /* Slider más finito (Firefox) */
+      #mixer input[type="range"]::-moz-range-track {
+        height: 4px; border-radius: 9999px;
+      }
+      #mixer input[type="range"]::-moz-range-thumb {
+        width: 14px; height: 14px; border: none; border-radius: 9999px;
+      }
+
+      /* Un poco menos de margen bajo el transport */
+      #transport { margin-bottom: .5rem !important; }
     </style>
 
     <script>
@@ -97,6 +126,29 @@
         }
         if (overlay) overlay.classList.remove('hidden');
         // OJO: no deshabilitamos el <input type="file"> para que se envíe correctamente.
+      });
+    })();
+    </script>
+
+    <script>
+    (function () {
+      // true si ya hay stems renderizados (después de separar)
+      const hasMem = {{ (mem_session is not none)|tojson }};
+      const form = document.querySelector("form[action='{{ url_for('separar') }}']");
+      const fileInput = form ? form.querySelector('input[type=\"file\"][name=\"file\"]') : null;
+      const clearBtn = document.getElementById('clearBtn');
+      if (!clearBtn) return;
+
+      clearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (hasMem) {
+          // Si ya separaste, volvemos al estado inicial (como al entrar a la página)
+          window.location.href = "{{ url_for('separar') }}";
+        } else {
+          // Si solo seleccionaste un archivo, limpiá el input para elegir otro
+          if (form) form.reset();
+          if (fileInput) fileInput.value = "";
+        }
       });
     })();
     </script>
@@ -132,7 +184,7 @@
         </div>
 
         <!-- Mezclador (orden fijo; Guitarra cae a 'other' si no existe 'guitar') -->
-        <div id="mixer" class="space-y-4">
+        <div id="mixer" class="space-y-3">
           {% set order  = ['vocals','guitar','bass','drums','piano'] %}
           {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','piano':'Teclado'} %}
           {% for name in order %}
