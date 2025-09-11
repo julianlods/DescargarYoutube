@@ -92,6 +92,18 @@
               {% endfor %}
             </select>
 
+            <!-- Botones: Descargar (2/3) + Borrar (1/3) -->       
+            <label class="block text-sm font-medium">Tipo de archivo</label>
+            <select
+              name="output_ext"
+              id="output_ext"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              required
+            >
+              <option value="mp4">MP4 (video)</option>
+              <option value="wav">WAV (audio)</option>
+            </select>
+
             <!-- Botones: Descargar (2/3) + Borrar (1/3) -->
             <div class="grid grid-cols-3 gap-3 pt-2">
               <button id="downloadBtn" type="submit"
@@ -153,7 +165,8 @@
           // Tomamos nombre del header si viene, si no, uno default
           const cd = resp.headers.get('Content-Disposition') || '';
           const match = /filename\*?=(?:UTF-8''|")?([^;\r\n"]+)/i.exec(cd);
-          const filename = match ? decodeURIComponent(match[1].replace(/"/g, '')) : 'video.mp4';
+          const cd = resp.headers.get('Content-Disposition') || '';
+          let filename = match ? decodeURIComponent(match[1].replace(/"/g, '')) : 'video.mp4';
           a.download = filename;
           document.body.appendChild(a);
           a.click();

@@ -387,10 +387,17 @@ def descargar():
                 return render_template('descargar.html', url=url, formats=None, error=str(e))
 
         elif url and format_id:
+            output_ext = request.form.get("output_ext", "mp4")
             filename = f"{uuid.uuid4()}.mp4"
             filepath = DOWNLOAD_FOLDER / filename
             try:
                 download_by_format(url, format_id, filepath)
+
+                if output_ext == "wav":
+                    wav_path = DOWNLOAD_FOLDER / f"{uuid.uuid4()}.wav"
+                    ffmpeg_extract_audio(str(filepath), str(wav_path))
+                    filepath.unlink(missing_ok=True)  # borra el mp4 intermedio
+                    filepath = wav_path
 
                 @after_this_request
                 def _cleanup(response):
@@ -400,8 +407,17 @@ def descargar():
                     except Exception as ex:
                         print(f"Error limpiando archivo: {ex}")
                     return response
+                # Usamos el título del video para un nombre más descriptivo
+                try:
+                    info = ytdlp_extract_info(url)
+                    title = info.get("title", "archivo")
+                    safe_title = "".join(c if c.isalnum() or c in "._- " else "_" for c in title)
+                except Exception:
+                    safe_title = "archivo"
 
-                return send_file(str(filepath), as_attachment=True, download_name="video.mp4")
+                return send_file(str(filepath),
+                                as_attachment=True,
+                                download_name=f"{safe_title}.{output_ext}")
             except Exception as e:
                 return render_template('descargar.html', url=url, formats=None, error=f"Error al descargar: {e}")
 
@@ -424,9 +440,15 @@ def separar():
         up_path = UPLOADS_DIR / f"{uuid.uuid4()}_{fname}"
         f.save(up_path)
 
-        # Convertimos a WAV 44.1kHz
+        # Convertimos a WAV 44.1kHz solo si hace falta
         wav_path = AUDIO_DIR / f"{uuid.uuid4()}.wav"
-        ffmpeg_extract_audio(str(up_path), str(wav_path))
+        ext = Path(up_path).suffix.lower()
+        if ext == ".wav":
+            # si ya es un wav, lo usamos directo (más rápido)
+            shutil.copy2(up_path, wav_path)
+        else:
+            # si es video u otro formato, lo convertimos
+            ffmpeg_extract_audio(str(up_path), str(wav_path))
 
         # Separar → CARGAR EN MEMORIA (NO persistimos en disco)
         mem_sid, present = separate_to_memory(wav_path)
