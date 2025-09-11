@@ -617,6 +617,11 @@ def mix_stems():
         "filename": mix_out.name
     })
 
+# ─── 5) PISTAS (procesar en el navegador) ──────────────────────────────
+@app.route("/pistas", methods=["GET"])
+def pistas():
+    return render_template("pistas.html")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────────────

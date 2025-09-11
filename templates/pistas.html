@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Separar pistas en el navegador</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- TensorFlow.js (usaremos la versión web para prototipos) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen pt-20">
+  <!-- Menú superior -->
+  <nav class="fixed top-0 inset-x-0 bg-white/80 backdrop-blur border-b border-gray-200/60 shadow-sm">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex justify-center">
+      <div class="inline-flex items-center gap-2 bg-gray-100/70 rounded-full p-1 ring-1 ring-gray-200">
+        <a href="{{ url_for('descargar') }}"
+          class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
+          Descargar
+        </a>
+        <a href="{{ url_for('separar') }}"
+          class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
+          Separar / Mutear
+        </a>
+        <a href="{{ url_for('pistas') }}"
+          class="px-4 py-1.5 rounded-full text-sm font-semibold text-white bg-red-600">
+          Pistas (Local)
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="w-full max-w-3xl mx-auto px-4 bg-white p-6 rounded-xl shadow-xl">
+    <h1 class="text-2xl font-bold mb-6 text-red-600">Separar pistas en tu navegador</h1>
+
+    <!-- Subida de archivo -->
+    <form id="pistasForm" class="space-y-6">
+      <div class="space-y-2">
+        <label class="flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">1</span>
+          <span class="text-base font-semibold">Subí el archivo de audio</span>
+        </label>
+        <input type="file" id="fileInput" accept="audio/*"
+               class="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4
+                      file:rounded-md file:border-0 file:text-sm file:font-semibold
+                      file:bg-red-600 file:text-white hover:file:bg-red-700" required />
+      </div>
+
+      <button type="submit"
+              class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
+        Procesar en mi navegador
+      </button>
+    </form>
+
+    <!-- Resultados -->
+    <div id="resultados" class="mt-6 hidden">
+      <h2 class="text-xl font-semibold mb-3">Resultados</h2>
+      <p class="text-sm text-gray-600">Acá aparecerán las pistas separadas (cuando integremos el modelo).</p>
+      <ul id="pistasList" class="list-disc list-inside text-sm text-gray-800"></ul>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById("pistasForm");
+    const resultados = document.getElementById("resultados");
+    const pistasList = document.getElementById("pistasList");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const file = document.getElementById("fileInput").files[0];
+      if (!file) return;
+
+      // TODO: integrar modelo en navegador
+      resultados.classList.remove("hidden");
+      pistasList.innerHTML = `<li>Archivo cargado: ${file.name}</li>
+                              <li>(Acá irían las pistas cuando esté el modelo integrado)</li>`;
+    });
+  </script>
+</body>
+</html>
