@@ -2,14 +2,12 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Separar pistas en el navegador</title>
+  <title>Separar/Mutear</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- TensorFlow.js (usaremos la versión web para prototipos) -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
 </head>
-<body class="bg-gray-100 text-gray-900 min-h-screen pt-20">
-  <!-- Menú superior -->
+<body class="bg-gray-100 text-gray-900 min-h-screen flex items-start justify-center pt-20">
+  <!-- Menú superior fijo -->
   <nav class="fixed top-0 inset-x-0 bg-white/80 backdrop-blur border-b border-gray-200/60 shadow-sm">
     <div class="max-w-4xl mx-auto px-4 py-3 flex justify-center">
       <div class="inline-flex items-center gap-2 bg-gray-100/70 rounded-full p-1 ring-1 ring-gray-200">
@@ -17,63 +15,254 @@
           class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
           Descargar
         </a>
-        <a href="{{ url_for('separar') }}"
-          class="px-4 py-1.5 rounded-full text-sm font-semibold text-gray-700 hover:text-red-700 hover:bg-white transition">
-          Separar / Mutear
-        </a>
         <a href="{{ url_for('pistas') }}"
           class="px-4 py-1.5 rounded-full text-sm font-semibold text-white bg-red-600">
-          Pistas (Local)
+          Separar/Mutear
         </a>
       </div>
     </div>
   </nav>
 
-  <div class="w-full max-w-3xl mx-auto px-4 bg-white p-6 rounded-xl shadow-xl">
-    <h1 class="text-2xl font-bold mb-6 text-red-600">Separar pistas en tu navegador</h1>
+  <div class="w-full max-w-3xl bg-white p-6 rounded-xl shadow-xl">
+    <h1 class="text-2xl font-bold mb-6 text-red-600">Generar Pistas</h1>
 
-    <!-- Subida de archivo -->
-    <form id="pistasForm" class="space-y-6">
+    {% if error %}
+      <div class="mb-4 bg-red-100 border border-red-400 text-red-700 p-3 rounded">{{ error }}</div>
+    {% endif %}
+
+    <!-- Formulario para subir archivo -->
+    <form method="POST" action="{{ url_for('pistas') }}" enctype="multipart/form-data" class="space-y-6">
       <div class="space-y-2">
-        <label class="flex items-center gap-2">
+        <div class="flex items-center gap-2">
           <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">1</span>
-          <span class="text-base font-semibold">Subí el archivo de audio</span>
-        </label>
-        <input type="file" id="fileInput" accept="audio/*"
-               class="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4
-                      file:rounded-md file:border-0 file:text-sm file:font-semibold
-                      file:bg-red-600 file:text-white hover:file:bg-red-700" required />
+          <h3 class="text-base font-semibold">Subí el archivo (audio o video)</h3>
+        </div>
+        <input
+          type="file"
+          name="file"
+          accept="audio/*,video/*"
+          required
+          class="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4
+                 file:rounded-md file:border-0 file:text-sm file:font-semibold
+                 file:bg-red-600 file:text-white hover:file:bg-red-700"
+        />
       </div>
 
-      <button type="submit"
-              class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
-        Procesar en mi navegador
-      </button>
+      <div class="grid grid-cols-3 gap-3 pt-2">
+        <button id="separarBtn" type="submit"
+                class="col-span-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
+          Procesar
+        </button>
+
+        <button id="clearBtn" type="button"
+                class="col-span-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-3 rounded-md transition">
+          Borrar
+        </button>
+      </div>
     </form>
 
-    <!-- Resultados -->
-    <div id="resultados" class="mt-6 hidden">
-      <h2 class="text-xl font-semibold mb-3">Resultados</h2>
-      <p class="text-sm text-gray-600">Acá aparecerán las pistas separadas (cuando integremos el modelo).</p>
-      <ul id="pistasList" class="list-disc list-inside text-sm text-gray-800"></ul>
+    {% if mem_session %}
+    <!-- Reproductor y mezclador -->
+    <div class="mt-8">
+      <h2 class="text-xl font-semibold mb-2">Reproductor</h2>
+      <p class="text-sm text-gray-600 mb-3">
+        Podés mutear o ajustar volúmenes de cada instrumento en <b>tiempo real</b>.
+      </p>
+
+      <!-- Transport -->
+      <div id="transport" class="flex items-center gap-3 mb-4">
+        <button id="back10" type="button"
+                class="bg-red-50 hover:bg-red-100 text-red-700 font-semibold px-3 py-2 rounded-md border border-red-300 transition">
+          ⏮ −10s
+        </button>
+
+        <button id="playBtn" type="button"
+                class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-md transition">
+          ▷ Play
+        </button>
+
+        <button id="fwd10" type="button"
+                class="bg-red-50 hover:bg-red-100 text-red-700 font-semibold px-3 py-2 rounded-md border border-red-300 transition">
+          +10s ⏭
+        </button>
+
+        <input id="seek" type="range" min="0" max="0" value="0" step="0.01" class="flex-1 accent-red-600">
+        <div class="text-sm w-32 text-right">
+          <span id="cur">0:00</span> / <span id="dur">0:00</span>
+        </div>
+      </div>
+
+      <!-- Mezclador -->
+      <div id="mixer" class="space-y-3">
+        {% set order  = ['vocals','guitar','bass','drums','piano'] %}
+        {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','piano':'Teclado'} %}
+        {% for name in order %}
+        <div class="border border-gray-200 rounded-lg p-4">
+          <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <input type="checkbox" class="w-4 h-4 accent-red-600" checked
+                     data-stem="{{ name }}" />
+              <strong class="w-28">{{ labels[name] }}</strong>
+            </div>
+            <div class="flex-1 flex items-center gap-3">
+              <input type="range" min="0" max="100" value="100" step="1"
+                     class="w-full accent-red-600" data-stem="{{ name }}" />
+              <span class="text-sm w-12 text-right" data-meter="{{ name }}">100%</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if mem_session %}
+  <script>
+  (function(){
+    const mem = "{{ mem_session }}";
+    const stems = {{ stems_present|tojson|safe if stems_present else '[]' }};
+    const order = stems;
+
+    let gains = {};
+    order.forEach(n => gains[n] = 1.0);
+
+    // Audio global
+    window.audio = new Audio();
+    const audio = window.audio;
+    audio.preload = 'auto';
+    let playing=false;
+
+    const playBtn = document.getElementById('playBtn');
+    const seek    = document.getElementById('seek');
+    const cur     = document.getElementById('cur');
+    const dur     = document.getElementById('dur');
+    const back10  = document.getElementById('back10');
+    const fwd10   = document.getElementById('fwd10');
+
+    function fmt(t){ 
+      if (!isFinite(t) || t<0) t=0;
+      const m=Math.floor(t/60), s=Math.floor(t%60);
+      return `${m}:${s.toString().padStart(2,'0')}`;
+    }
+
+    function buildUrl(t=0){
+      const params = new URLSearchParams({ folder: mem, t });
+      for(const [k,v] of Object.entries(gains)){
+        params.append(k, Math.round(v*100));
+      }
+      return `/stream_mix?${params.toString()}`;
+    }
+
+    // Inicializar al cargar
+    audio.src = buildUrl(0);
+
+    function restartAt(t=0){
+      audio.src = buildUrl(t);
+      audio.play();
+    }
+
+    playBtn.addEventListener('click', ()=>{
+      if(!playing){
+        audio.src = buildUrl(audio.currentTime||0);
+        audio.load();
+        audio.play();
+        playing=true; playBtn.textContent='❚❚ Pause';
+      }else{
+        audio.pause();
+        playing=false; playBtn.textContent='▷ Play';
+      }
+    });
+
+    audio.addEventListener('loadedmetadata', ()=>{
+      seek.max = audio.duration.toFixed(2);
+      dur.textContent = fmt(audio.duration);
+    });
+    audio.addEventListener('timeupdate', ()=>{
+      seek.value = audio.currentTime.toFixed(2);
+      cur.textContent = fmt(audio.currentTime);
+    });
+
+    seek.addEventListener('input', ()=>{
+      audio.currentTime = parseFloat(seek.value)||0;
+    });
+    back10.addEventListener('click',()=> audio.currentTime=Math.max(0,(audio.currentTime||0)-10));
+    fwd10 .addEventListener('click',()=> audio.currentTime=(audio.currentTime||0)+10);
+
+    // Sliders
+    document.querySelectorAll('input[type="range"][data-stem]').forEach(r=>{
+      const name=r.getAttribute('data-stem');
+      const meter=document.querySelector(`[data-meter="${name}"]`);
+      r.addEventListener('input',()=>{
+        const g=(parseInt(r.value,10)||0)/100;
+        gains[name]=g;
+        if(meter) meter.textContent=Math.round(g*100)+'%';
+        if(playing){ 
+          audio.src = buildUrl(audio.currentTime||0);
+          audio.play();
+        }
+      });
+    });
+
+    // Checkboxes
+    document.querySelectorAll('input[type="checkbox"][data-stem]').forEach(c=>{
+      const name=c.getAttribute('data-stem');
+      const slider=document.querySelector(`input[type="range"][data-stem="${name}"]`);
+      const meter =document.querySelector(`[data-meter="${name}"]`);
+      c.addEventListener('change',()=>{
+        if(c.checked){
+          gains[name]=parseInt(slider.value,10)/100;
+          if(meter) meter.textContent=Math.round(gains[name]*100)+'%';
+        }else{
+          gains[name]=0;
+          if(slider) slider.value=0;
+          if(meter) meter.textContent='0%';
+        }
+        if(playing){ 
+          audio.src = buildUrl(audio.currentTime||0);
+          audio.play();
+        }
+      });
+    });
+  })();
+  </script>
+  {% endif %}
+
+  <script>
+  (function(){
+    const clearBtn = document.getElementById('clearBtn');
+    if(clearBtn){
+      clearBtn.addEventListener('click', ()=>{
+        document.querySelector("form").reset();
+        if(window.audio){ window.audio.pause(); }
+        const playerBlock = document.querySelector('.mt-8');
+        if(playerBlock){ playerBlock.remove(); }
+      });
+    }
+  })();
+  </script>
+
+  <!-- Popup de procesamiento -->
+  <div id="processingPopup" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-xl p-6 flex flex-col items-center gap-4 shadow-xl">
+      <div class="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+      <p class="text-gray-800 font-semibold">Procesando...</p>
     </div>
   </div>
 
   <script>
-    const form = document.getElementById("pistasForm");
-    const resultados = document.getElementById("resultados");
-    const pistasList = document.getElementById("pistasList");
-
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const file = document.getElementById("fileInput").files[0];
-      if (!file) return;
-
-      // TODO: integrar modelo en navegador
-      resultados.classList.remove("hidden");
-      pistasList.innerHTML = `<li>Archivo cargado: ${file.name}</li>
-                              <li>(Acá irían las pistas cuando esté el modelo integrado)</li>`;
-    });
+  (function(){
+    const form = document.querySelector("form");
+    const popup = document.getElementById("processingPopup");
+    if(form && popup){
+      form.addEventListener("submit", (e)=>{
+        e.preventDefault();                 // detener envío inmediato
+        popup.classList.remove("hidden");   // mostrar popup
+        setTimeout(()=>{ form.submit(); }, 100); // enviar de verdad con leve delay
+      });
+    }
+  })();
   </script>
+
 </body>
 </html>

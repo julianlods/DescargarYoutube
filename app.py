@@ -424,48 +424,6 @@ def descargar():
     # GET
     return render_template('descargar.html', formats=None)
 
-# ─── 2) SEPARAR / “MODO MOISES” (solo archivo subido) ────────────────────────
-@app.route("/separar", methods=["GET", "POST"])
-def separar():
-    if request.method == "GET":
-        return render_template("separar.html")
-
-    # SOLO archivo subido (sin URL)
-    if "file" not in request.files or not request.files["file"].filename:
-        return render_template("separar.html", error="Subí un archivo de audio o video.")
-
-    try:
-        f = request.files["file"]
-        fname = secure_filename(f.filename)
-        up_path = UPLOADS_DIR / f"{uuid.uuid4()}_{fname}"
-        f.save(up_path)
-
-        # Convertimos a WAV 44.1kHz solo si hace falta
-        wav_path = AUDIO_DIR / f"{uuid.uuid4()}.wav"
-        ext = Path(up_path).suffix.lower()
-        if ext == ".wav":
-            # si ya es un wav, lo usamos directo (más rápido)
-            shutil.copy2(up_path, wav_path)
-        else:
-            # si es video u otro formato, lo convertimos
-            ffmpeg_extract_audio(str(up_path), str(wav_path))
-
-        # Separar → CARGAR EN MEMORIA (NO persistimos en disco)
-        mem_sid, present = separate_to_memory(wav_path)
-        session['mem_session'] = mem_sid
-        session['stems_present'] = present
-        safe_unlink(up_path)
-        safe_unlink(wav_path)
-
-        return render_template(
-            "separar.html",
-            src_name=Path(wav_path).name,
-            mem_session=mem_sid,
-            stems_present=present
-        )
-
-    except Exception as e:
-        return render_template("separar.html", error=str(e))
 
 # ─── Ruta experimental ───────────────────────────────────────
 @app.get("/experimental")
@@ -618,8 +576,44 @@ def mix_stems():
     })
 
 # ─── 5) PISTAS (procesar en el navegador) ──────────────────────────────
-@app.route("/pistas", methods=["GET"])
+# RUTA /pistas
+@app.route("/pistas", methods=["GET", "POST"])
 def pistas():
+    if request.method == "POST":
+        file = request.files.get("file")
+        if not file:
+            return render_template("pistas.html", error="No subiste archivo")
+
+        filename = secure_filename(file.filename)
+        raw_path = UPLOADS_DIR / filename
+        file.save(raw_path)
+
+        # Convertir a WAV 44.1kHz
+        wav_path = UPLOADS_DIR / f"{uuid.uuid4().hex}.wav"
+        try:
+            ffmpeg_extract_audio(str(raw_path), str(wav_path))
+        except Exception as e:
+            return render_template("pistas.html", error=f"FFmpeg falló: {e}")
+        finally:
+            safe_unlink(raw_path)  # borramos el original
+
+        # Ejecutar Demucs en memoria
+        try:
+            mem_sid, present = separate_to_memory(wav_path)
+            session['mem_session'] = mem_sid
+            session['stems_present'] = present
+        except Exception as e:
+            return render_template("pistas.html", error=f"Demucs falló: {e}")
+        finally:
+            safe_unlink(wav_path)
+
+        return render_template(
+            "pistas.html",
+            mem_session=mem_sid,
+            stems_present=present,
+            filename=filename
+        )
+
     return render_template("pistas.html")
 
 # ──────────────────────────────────────────────────────────────────────────────
