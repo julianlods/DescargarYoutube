@@ -134,16 +134,33 @@
         {% set order  = ['vocals','guitar','bass','drums','piano'] %}
         {% set labels = {'vocals':'Voz','guitar':'Guitarra','bass':'Bajo','drums':'Batería','piano':'Teclado'} %}
         {% for name in order %}
-        <div class="border border-gray-200 rounded-lg p-4">
+        <div class="border rounded-lg p-4
+          {% if name == 'vocals' %}border-pink-400 bg-pink-50{% endif %}
+          {% if name == 'guitar' %}border-green-400 bg-green-50{% endif %}
+          {% if name == 'bass' %}border-blue-400 bg-blue-50{% endif %}
+          {% if name == 'drums' %}border-yellow-400 bg-yellow-50{% endif %}
+          {% if name == 'piano' %}border-purple-400 bg-purple-50{% endif %}
+        ">
           <div class="flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
-              <input type="checkbox" class="w-4 h-4 accent-red-600" checked
-                     data-stem="{{ name }}" />
+              <input type="checkbox" class="w-4 h-4 
+                {% if name == 'vocals' %}accent-pink-600{% endif %}
+                {% if name == 'guitar' %}accent-green-600{% endif %}
+                {% if name == 'bass' %}accent-blue-600{% endif %}
+                {% if name == 'drums' %}accent-yellow-600{% endif %}
+                {% if name == 'piano' %}accent-purple-600{% endif %}
+              " checked data-stem="{{ name }}" />
               <strong class="w-28">{{ labels[name] }}</strong>
             </div>
             <div class="flex-1 flex items-center gap-3">
               <input type="range" min="0" max="100" value="100" step="1"
-                     class="w-full accent-red-600" data-stem="{{ name }}" />
+                    class="w-full 
+                {% if name == 'vocals' %}accent-pink-600{% endif %}
+                {% if name == 'guitar' %}accent-green-600{% endif %}
+                {% if name == 'bass' %}accent-blue-600{% endif %}
+                {% if name == 'drums' %}accent-yellow-600{% endif %}
+                {% if name == 'piano' %}accent-purple-600{% endif %}
+              " data-stem="{{ name }}" />
               <span class="text-sm w-12 text-right" data-meter="{{ name }}">100%</span>
             </div>
           </div>
