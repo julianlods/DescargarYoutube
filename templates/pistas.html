@@ -61,6 +61,42 @@
       </div>
     </form>
 
+    <style>
+      /* Menos separación entre tarjetas del mixer */
+      #mixer > * + * { margin-top: .375rem !important; }         /* 6px */
+      @media (min-width:640px){
+        #mixer > * + * { margin-top: .5rem !important; }         /* 8px en sm+ */
+      }
+
+      /* Tarjetas más compactas */
+      #mixer .border.rounded-lg { padding: .5rem .75rem !important; }  /* py-2 px-3 aprox */
+      #mixer .flex.items-center.justify-between { gap: .5rem !important; }
+
+      /* Labels y medidores más chicos */
+      #mixer strong.w-28 { width: 5.25rem !important; }          /* ~84px */
+      #mixer [data-meter] { width: 2rem !important; text-align: right; font-size: .875rem; }
+
+      /* Slider más finito (Chrome/Edge/Safari) */
+      #mixer input[type="range"] { height: 18px; }
+      #mixer input[type="range"]::-webkit-slider-runnable-track {
+        height: 4px; border-radius: 9999px;
+      }
+      #mixer input[type="range"]::-webkit-slider-thumb {
+        width: 14px; height: 14px; margin-top: -5px; border-radius: 9999px;
+      }
+
+      /* Slider más finito (Firefox) */
+      #mixer input[type="range"]::-moz-range-track {
+        height: 4px; border-radius: 9999px;
+      }
+      #mixer input[type="range"]::-moz-range-thumb {
+        width: 14px; height: 14px; border: none; border-radius: 9999px;
+      }
+
+      /* Un poco menos de margen bajo el transport */
+      #transport { margin-bottom: .5rem !important; }
+    </style>
+
     {% if mem_session %}
     <!-- Reproductor y mezclador -->
     <div class="mt-8">
@@ -77,9 +113,10 @@
         </button>
 
         <button id="playBtn" type="button"
-                class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-md transition">
+                class="inline-flex items-center justify-center w-28 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-md transition">
           ▷ Play
         </button>
+
 
         <button id="fwd10" type="button"
                 class="bg-red-50 hover:bg-red-100 text-red-700 font-semibold px-3 py-2 rounded-md border border-red-300 transition">
@@ -127,11 +164,22 @@
     let gains = {};
     order.forEach(n => gains[n] = 1.0);
 
-    // Audio global
-    window.audio = new Audio();
-    const audio = window.audio;
-    audio.preload = 'auto';
-    let playing=false;
+    // Un reproductor por stem
+    const audios = {};
+    const defaultGain = {};
+    stems.forEach(n => {
+      const a = new Audio(`/mem_stem/${mem}/${n}.wav`);
+      a.preload = 'auto';
+      a.volume = 1.0;
+      a.muted = false;
+      audios[n] = a;
+      defaultGain[n] = 1.0;
+    });
+
+    // Usamos el primer stem como "reloj"
+    const clock = stems.length ? audios[stems[0]] : null;
+    let playing = false;
+
 
     const playBtn = document.getElementById('playBtn');
     const seek    = document.getElementById('seek');
@@ -146,48 +194,52 @@
       return `${m}:${s.toString().padStart(2,'0')}`;
     }
 
-    function buildUrl(t=0){
-      const params = new URLSearchParams({ folder: mem, t });
-      for(const [k,v] of Object.entries(gains)){
-        params.append(k, Math.round(v*100));
-      }
-      return `/stream_mix?${params.toString()}`;
-    }
-
-    // Inicializar al cargar
-    audio.src = buildUrl(0);
-
-    function restartAt(t=0){
-      audio.src = buildUrl(t);
-      audio.play();
-    }
-
-    playBtn.addEventListener('click', ()=>{
-      if(!playing){
-        audio.src = buildUrl(audio.currentTime||0);
-        audio.load();
-        audio.play();
-        playing=true; playBtn.textContent='❚❚ Pause';
-      }else{
-        audio.pause();
-        playing=false; playBtn.textContent='▷ Play';
+    playBtn.addEventListener('click', async () => {
+      if (!playing) {
+        // Arranca desde la posición actual, no desde cero
+        const t = clock.currentTime || 0;
+        Object.values(audios).forEach(a => { a.currentTime = t; });
+        await Promise.all(Object.values(audios).map(a => a.play().catch(()=>{})));
+        playing = true;
+        playBtn.textContent = '❚❚ Pause';
+      } else {
+        Object.values(audios).forEach(a => a.pause());
+        playing = false;
+        playBtn.textContent = '▷ Play';
       }
     });
 
-    audio.addEventListener('loadedmetadata', ()=>{
-      seek.max = audio.duration.toFixed(2);
-      dur.textContent = fmt(audio.duration);
-    });
-    audio.addEventListener('timeupdate', ()=>{
-      seek.value = audio.currentTime.toFixed(2);
-      cur.textContent = fmt(audio.currentTime);
-    });
+    // Ticker para actualizar seek/cur en tiempo real
+    function raf(){
+      if (playing && clock){
+        seek.value = clock.currentTime.toFixed(2);
+        cur.textContent = fmt(clock.currentTime);
+      }
+      requestAnimationFrame(raf);
+    }
+    requestAnimationFrame(raf);
 
-    seek.addEventListener('input', ()=>{
-      audio.currentTime = parseFloat(seek.value)||0;
-    });
-    back10.addEventListener('click',()=> audio.currentTime=Math.max(0,(audio.currentTime||0)-10));
-    fwd10 .addEventListener('click',()=> audio.currentTime=(audio.currentTime||0)+10);
+    if (clock) {
+      clock.addEventListener('timeupdate', () => {
+        seek.value = clock.currentTime.toFixed(2);
+        cur.textContent = fmt(clock.currentTime);
+      });
+
+      seek.addEventListener('input', () => {
+        const t = parseFloat(seek.value) || 0;
+        Object.values(audios).forEach(a => { a.currentTime = t; });
+      });
+
+      back10.addEventListener('click', () => {
+        const t = Math.max(0, (clock.currentTime || 0) - 10);
+        Object.values(audios).forEach(a => { a.currentTime = t; });
+      });
+
+      fwd10.addEventListener('click', () => {
+        const t = (clock.currentTime || 0) + 10;
+        Object.values(audios).forEach(a => { a.currentTime = t; });
+      });
+    }
 
     // Sliders
     document.querySelectorAll('input[type="range"][data-stem]').forEach(r=>{
@@ -195,32 +247,37 @@
       const meter=document.querySelector(`[data-meter="${name}"]`);
       r.addEventListener('input',()=>{
         const g=(parseInt(r.value,10)||0)/100;
-        gains[name]=g;
-        if(meter) meter.textContent=Math.round(g*100)+'%';
-        if(playing){ 
-          audio.src = buildUrl(audio.currentTime||0);
-          audio.play();
+        if(audios[name]){
+          audios[name].volume = g;
+          audios[name].muted  = (g===0);
         }
+        if(meter) meter.textContent=Math.round(g*100)+'%';
       });
     });
 
-    // Checkboxes
+    // Checkboxes con memoria del volumen previo
     document.querySelectorAll('input[type="checkbox"][data-stem]').forEach(c=>{
       const name=c.getAttribute('data-stem');
       const slider=document.querySelector(`input[type="range"][data-stem="${name}"]`);
       const meter =document.querySelector(`[data-meter="${name}"]`);
+      let prevGain = 1.0; // valor por defecto
+
       c.addEventListener('change',()=>{
-        if(c.checked){
-          gains[name]=parseInt(slider.value,10)/100;
-          if(meter) meter.textContent=Math.round(gains[name]*100)+'%';
-        }else{
-          gains[name]=0;
-          if(slider) slider.value=0;
-          if(meter) meter.textContent='0%';
-        }
-        if(playing){ 
-          audio.src = buildUrl(audio.currentTime||0);
-          audio.play();
+        if(audios[name]){
+          if(c.checked){
+            // restaurar al volumen previo
+            audios[name].volume = prevGain;
+            audios[name].muted  = (prevGain===0);
+            if(slider) slider.value = Math.round(prevGain*100);
+            if(meter)  meter.textContent = Math.round(prevGain*100)+'%';
+          }else{
+            // guardar volumen actual antes de mutear
+            prevGain = audios[name].volume || (parseInt(slider.value,10)/100) || 1.0;
+            audios[name].volume = 0;
+            audios[name].muted  = true;
+            if(slider) slider.value = 0;
+            if(meter)  meter.textContent = '0%';
+          }
         }
       });
     });
@@ -233,10 +290,27 @@
     const clearBtn = document.getElementById('clearBtn');
     if(clearBtn){
       clearBtn.addEventListener('click', ()=>{
+        // resetear form
         document.querySelector("form").reset();
-        if(window.audio){ window.audio.pause(); }
+
+        // pausar y limpiar todos los audios de stems
+        if(window.audios){
+          Object.values(window.audios).forEach(a => {
+            try{ 
+              if (!a.paused) a.pause();   // detener si está sonando
+              a.currentTime = 0;          // resetear posición
+            }catch(e){}
+          });
+          window.audios = {};  // vaciar referencias para evitar que siga sonando
+        }
+
+        // borrar bloque del reproductor
         const playerBlock = document.querySelector('.mt-8');
         if(playerBlock){ playerBlock.remove(); }
+
+        // resetear texto del botón Play si existiera
+        const playBtn = document.getElementById('playBtn');
+        if(playBtn){ playBtn.textContent = '▷ Play'; }
       });
     }
   })();
@@ -256,9 +330,7 @@
     const popup = document.getElementById("processingPopup");
     if(form && popup){
       form.addEventListener("submit", (e)=>{
-        e.preventDefault();                 // detener envío inmediato
         popup.classList.remove("hidden");   // mostrar popup
-        setTimeout(()=>{ form.submit(); }, 100); // enviar de verdad con leve delay
       });
     }
   })();
