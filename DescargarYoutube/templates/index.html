@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Descargar Video de YouTube</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen pt-20">
+  <!-- Menú superior fijo -->
+  <nav class="fixed top-0 inset-x-0 bg-white/80 backdrop-blur border-b border-gray-200/60 shadow-sm">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex justify-center">
+      <div class="inline-flex items-center gap-2 bg-gray-100/70 rounded-full p-1 ring-1 ring-gray-200">
+        <a href="{{ url_for('index') }}"
+          class="px-4 py-1.5 rounded-full text-sm font-semibold text-white bg-red-600">
+          Descargar
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="w-full max-w-3xl mx-auto px-4 bg-white p-6 rounded-xl shadow-xl">
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold mb-6 text-red-600">Descargar de YouTube</h1>
+    </div>
+
+    {% if error %}
+      <div class="mb-4 bg-red-100 border border-red-400 text-red-700 p-3 rounded">{{ error }}</div>
+    {% endif %}
+
+    <form id="dlForm" method="POST" action="{{ url_for('index') }}" class="space-y-6">
+
+      <!-- PASO 1 -->
+      <div class="space-y-2">
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">1</span>
+          <h3 class="text-base font-semibold">Pegá la URL del video</h3>
+        </div>
+        <input id="url" name="url" type="url" required value="{{ url or '' }}"
+              placeholder="https://www.youtube.com/watch?v=..."
+              class="w-full p-3 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" />
+      </div>
+
+      <!-- PASO 2 -->
+      <div class="space-y-2">
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">2</span>
+          <h3 class="text-base font-semibold">Elegí el formato</h3>
+        </div>
+        <div class="space-y-2 pl-8">
+          <label class="inline-flex items-center">
+            <input type="checkbox" name="output_ext" value="mp4" class="mr-2">
+            MP4 (video)
+          </label>
+          <label class="inline-flex items-center">
+            <input type="checkbox" name="output_ext" value="wav" class="mr-2">
+            WAV (audio)
+          </label>
+        </div>
+      </div>
+
+      <!-- PASO 3 -->
+      <div class="space-y-2">
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold">3</span>
+          <h3 class="text-base font-semibold">Descargar</h3>
+        </div>
+        <div class="grid grid-cols-2 gap-3 pt-2 pl-8">
+          <button id="downloadBtn" type="submit"
+            class="bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-md transition">
+            Descargar
+          </button>
+          <a href="{{ url_for('index') }}"
+            class="text-center bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-3 rounded-md transition rounded-md">
+            Limpiar
+          </a>
+        </div>
+      </div>
+
+    </form>
+  </div>
+
+  <script>
+    (function () {
+      const form = document.getElementById('dlForm');
+      const clearBtn = document.getElementById('clearBtn');
+      const clearBtn2 = document.getElementById('clearBtn2');
+
+      function clearForm() {
+        if (form) form.reset();
+        window.location.href = "{{ url_for('index') }}";
+      }
+
+      if (clearBtn) clearBtn.addEventListener('click', clearForm);
+      if (clearBtn2) clearBtn2.addEventListener('click', clearForm);
+    })();
+  </script>
+</body>
+</html>
