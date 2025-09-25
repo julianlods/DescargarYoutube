@@ -154,7 +154,7 @@ def separar():
             "Guitarra": "guitar.wav",
             "Bajo": "bass.wav",
             "Batería": "drums.wav",
-            "Teclado (piano)": "piano.wav",
+            "Teclado": "piano.wav",
         }
 
         # agregar 'other' como respaldo si existe

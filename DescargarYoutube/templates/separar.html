@@ -34,18 +34,18 @@
     }
 
     /* Colores de cada pista */
-    input[data-stem="Voz"]::-webkit-slider-runnable-track { background: #10b981; }   /* verde */
-    input[data-stem="Guitarra"]::-webkit-slider-runnable-track { background: #8b5cf6; } /* violeta */
-    input[data-stem="Bajo"]::-webkit-slider-runnable-track { background: #3b82f6; }    /* azul */
-    input[data-stem="Batería"]::-webkit-slider-runnable-track { background: #ef4444; } /* rojo */
-    input[data-stem="Teclado (Piano)"]::-webkit-slider-runnable-track { background: #f59e0b; } /* naranja */
-    input[data-stem="Otros"]::-webkit-slider-runnable-track { background: #6b7280; }   /* gris */
+    input[data-stem="Voz"]::-webkit-slider-runnable-track { background: #10b981; }
+    input[data-stem="Guitarra"]::-webkit-slider-runnable-track { background: #8b5cf6; }
+    input[data-stem="Bajo"]::-webkit-slider-runnable-track { background: #3b82f6; }
+    input[data-stem="Batería"]::-webkit-slider-runnable-track { background: #ef4444; }
+    input[data-stem="Teclado"]::-webkit-slider-runnable-track { background: #f59e0b; }
+    input[data-stem="Otros"]::-webkit-slider-runnable-track { background: #6b7280; }
 
     input[data-stem="Voz"]::-moz-range-track { background: #10b981; }
     input[data-stem="Guitarra"]::-moz-range-track { background: #8b5cf6; }
     input[data-stem="Bajo"]::-moz-range-track { background: #3b82f6; }
     input[data-stem="Batería"]::-moz-range-track { background: #ef4444; }
-    input[data-stem="Teclado (Piano)"]::-moz-range-track { background: #f59e0b; }
+    input[data-stem="Teclado"]::-moz-range-track { background: #f59e0b; }
     input[data-stem="Otros"]::-moz-range-track { background: #6b7280; }
 
     /* Botones mute/unmute con ancho fijo */
@@ -85,7 +85,17 @@
       <div class="mb-4">
         <h2 class="text-base font-semibold mb-1">Reproductor principal</h2>
         {% if stems %}
-          <audio id="mainPlayer" controls class="w-full h-8" src="/{{ stems[0].file }}"></audio>
+          {# Elegimos como master la primera pista que NO sea Voz #}
+          {% set ns = namespace(master=None) %}
+          {% for s in stems %}
+            {% if ns.master is none and s.label != 'Voz' %}
+              {% set ns.master = s.file %}
+            {% endif %}
+          {% endfor %}
+          {% set master = ns.master if ns.master else stems[0].file %}
+
+          <audio id="mainPlayer" controls class="w-full h-8" src="/{{ master }}" muted></audio>
+
         {% endif %}
       </div>
 
