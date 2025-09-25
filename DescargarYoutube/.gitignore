@@ -16,6 +16,8 @@ __pycache__/
 
 # Librería externa (no subir)
 yt_dlp/
+*.wav
+*.mp3
 
 # Carpeta de descargas (videos, audios)
 downloads/
@@ -35,4 +37,4 @@ Thumbs.db
 .vscode/
 .idea/
 
-yt_dlp/
+downloads/stems/

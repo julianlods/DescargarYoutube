@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Separar / Mutear pistas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      height: 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: white;
+      border: 2px solid #000;
+      cursor: pointer;
+      margin-top: -4px;
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: white;
+      border: 2px solid #000;
+      cursor: pointer;
+    }
+
+    /* Colores de cada pista */
+    input[data-stem="Voz"]::-webkit-slider-runnable-track { background: #10b981; }   /* verde */
+    input[data-stem="Guitarra"]::-webkit-slider-runnable-track { background: #8b5cf6; } /* violeta */
+    input[data-stem="Bajo"]::-webkit-slider-runnable-track { background: #3b82f6; }    /* azul */
+    input[data-stem="Batería"]::-webkit-slider-runnable-track { background: #ef4444; } /* rojo */
+    input[data-stem="Teclado (Piano)"]::-webkit-slider-runnable-track { background: #f59e0b; } /* naranja */
+    input[data-stem="Otros"]::-webkit-slider-runnable-track { background: #6b7280; }   /* gris */
+
+    input[data-stem="Voz"]::-moz-range-track { background: #10b981; }
+    input[data-stem="Guitarra"]::-moz-range-track { background: #8b5cf6; }
+    input[data-stem="Bajo"]::-moz-range-track { background: #3b82f6; }
+    input[data-stem="Batería"]::-moz-range-track { background: #ef4444; }
+    input[data-stem="Teclado (Piano)"]::-moz-range-track { background: #f59e0b; }
+    input[data-stem="Otros"]::-moz-range-track { background: #6b7280; }
+
+    /* Botones mute/unmute con ancho fijo */
+    .mute {
+      min-width: 70px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen pt-20">
+  <nav class="fixed top-0 inset-x-0 bg-white/80 backdrop-blur border-b border-gray-200/60 shadow-sm">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex justify-center">
+      <div class="inline-flex items-center gap-2 bg-gray-100/70 rounded-full p-1 ring-1 ring-gray-200">
+        <a href="{{ url_for('index') }}" class="px-4 py-1.5 rounded-full text-sm font-semibold text-red-600 hover:bg-red-50">Descargar</a>
+        <a href="{{ url_for('separar') }}" class="px-4 py-1.5 rounded-full text-sm font-semibold text-white bg-red-600">Separar / Mutear</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="w-full max-w-3xl mx-auto px-4 bg-white p-6 rounded-xl shadow-xl">
+    <h1 class="text-2xl font-bold mb-6 text-red-600">Separar / Mutear pistas</h1>
+
+    {% if error %}
+      <div class="mb-4 bg-red-100 border border-red-400 text-red-700 p-3 rounded">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" enctype="multipart/form-data" class="bg-gray-50 p-5 rounded-xl shadow space-y-5 mb-6">
+      <label class="block text-sm font-medium mb-1">Subí tu archivo WAV</label>
+      <input type="file" name="file" accept=".wav" required class="w-full bg-gray-200 p-2 rounded">
+      <div class="grid grid-cols-2 gap-3">
+        <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-md transition w-full">Procesar</button>
+        <a href="{{ url_for('separar') }}" class="text-center bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-md transition w-full">Limpiar</a>
+      </div>
+    </form>
+
+    {% if success %}
+      <div class="mb-4">
+        <h2 class="text-base font-semibold mb-1">Reproductor principal</h2>
+        {% if stems %}
+          <audio id="mainPlayer" controls class="w-full h-8" src="/{{ stems[0].file }}"></audio>
+        {% endif %}
+      </div>
+
+      <div id="controls" class="space-y-3 text-sm">
+        {% for s in stems %}
+        <div class="flex items-center gap-3">
+          <span class="w-20 capitalize text-gray-700">{{ s.label }}</span>
+          <input type="range" min="0" max="1" step="0.01" value="1" data-stem="{{ s.label }}">
+          <span id="vol-{{ s.label }}" class="w-12 text-center text-gray-600">100%</span>
+          <button class="mute bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-white text-xs" data-stem="{{ s.label }}">Mute</button>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="hidden">
+        {% for s in stems %}
+          <audio id="audio-{{ s.label }}" src="/{{ s.file }}" preload="auto"></audio>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <script>
+    const stems = {{ stems|tojson if stems else "[]" }};
+    const mainPlayer = document.getElementById("mainPlayer");
+    const audios = {};
+    stems.forEach(s => { audios[s.label] = document.getElementById("audio-" + s.label); });
+    mainPlayer?.addEventListener("play", () => { Object.values(audios).forEach(a => { a.currentTime = mainPlayer.currentTime; a.play(); }); });
+    mainPlayer?.addEventListener("pause", () => { Object.values(audios).forEach(a => a.pause()); });
+    mainPlayer?.addEventListener("timeupdate", () => { Object.values(audios).forEach(a => { if (Math.abs(a.currentTime - mainPlayer.currentTime) > 0.3) a.currentTime = mainPlayer.currentTime; }); });
+    document.querySelectorAll("input[type=range]").forEach(slider => {
+      slider.addEventListener("input", e => {
+        const stem = e.target.dataset.stem;
+        if (audios[stem]) {
+          audios[stem].volume = e.target.value;
+          document.getElementById("vol-" + stem).textContent = Math.round(e.target.value * 100) + "%";
+        }
+      });
+    });
+    document.querySelectorAll(".mute").forEach(btn => {
+      btn.addEventListener("click", e => {
+        const stem = e.target.dataset.stem;
+        if (audios[stem]) {
+          audios[stem].muted = !audios[stem].muted;
+          btn.textContent = audios[stem].muted ? "Unmute" : "Mute";
+        }
+      });
+    });
+  </script>
+</body>
+</html>
