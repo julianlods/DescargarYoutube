@@ -14,6 +14,9 @@ __pycache__/
 *.o
 *.a
 
+# Librería externa (no subir)
+yt_dlp/
+
 # Carpeta de descargas (videos, audios)
 downloads/
 
@@ -31,3 +34,5 @@ Thumbs.db
 # Configuración de VSCode / PyCharm
 .vscode/
 .idea/
+
+yt_dlp/
